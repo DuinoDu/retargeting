@@ -3,4 +3,5 @@ build-*/
 .g1_pinocchio_tmp.xml
 # Ignore stray CSVs at the root (demo scratch output) but keep test data.
 /*.csv
-!data/**
+data/.DS_Store
+data/spatialmp4/

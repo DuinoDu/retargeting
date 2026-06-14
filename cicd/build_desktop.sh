@@ -10,12 +10,14 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 N="${1:-200}"
 FPS="${2:-30}"
 H="${3:-1.75}"
 
-cd "$SCRIPT_DIR"
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+# Build from the repo root so the data/ paths below resolve; CMake source is app/.
+cd "$REPO_ROOT"
+cmake -S app -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 
 REF="data/reference/qpos_upper_body_g1_f${N}_fps${FPS%.*}_h${H}.csv"

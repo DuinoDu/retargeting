@@ -5,12 +5,12 @@
 # On Android the kinematics backend is MuJoCo (from mujoco-android): MuJoCo loads
 # MJCF natively, whereas the pinocchio-android build is core-only without the
 # MJCF parser. Eigen is header-only (resolved from the host); nlohmann-json is
-# vendored under third_party/. No pinocchio / vcpkg dependency on this path.
+# fetched via cmake/nlohmann_json.cmake. No pinocchio / vcpkg dependency here.
 #
 # Prerequisites:
 #   - ANDROID_NDK / ANDROID_NDK_HOME pointing at an NDK r26+ install.
-#   - MuJoCo built for Android:  make -C xr build-mujoco-android
-#     (or set MUJOCO_ANDROID_ROOT to a prebuilt install with lib/libmujoco.so).
+#   - A MuJoCo Android install (lib/libmujoco.so) from the mujoco-android repo.
+#     Point MUJOCO_ANDROID_ROOT at it, or place it under .deps (see below).
 #
 # Usage:
 #   build_android.sh            # build, then push+run+verify if a device is up
@@ -19,7 +19,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
 ANDROID_ABI="${ANDROID_ABI:-arm64-v8a}"
 ANDROID_API="${ANDROID_API:-android-29}"
@@ -55,16 +55,17 @@ if [[ -z "$MUJOCO_ANDROID_ROOT" ]]; then
 fi
 if [[ -z "$MUJOCO_ANDROID_ROOT" || ! -f "$MUJOCO_ANDROID_ROOT/lib/libmujoco.so" ]]; then
   echo "ERROR: MuJoCo Android install not found." >&2
-  echo "       Run:  make -C $REPO_ROOT/xr build-mujoco-android" >&2
-  echo "       or set MUJOCO_ANDROID_ROOT to an install with lib/libmujoco.so." >&2
+  echo "       Set MUJOCO_ANDROID_ROOT to a mujoco-android install with" >&2
+  echo "       lib/libmujoco.so, or place one under $OPERATOR_DEPS_CACHE_ROOT." >&2
   exit 1
 fi
 echo "MuJoCo Android install: $MUJOCO_ANDROID_ROOT"
 
 # --- configure + build ----------------------------------------------------
-cd "$SCRIPT_DIR"
+# Build from the repo root (data/ staging below is relative); CMake source is app/.
+cd "$REPO_ROOT"
 BUILD_DIR="build-android-${ANDROID_ABI}"
-cmake -B "$BUILD_DIR" \
+cmake -S app -B "$BUILD_DIR" \
   -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK/build/cmake/android.toolchain.cmake" \
   -DANDROID_ABI="$ANDROID_ABI" \
   -DANDROID_PLATFORM="$ANDROID_API" \

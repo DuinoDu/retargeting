@@ -53,16 +53,11 @@ if(RETARGETING_WITH_PINOCCHIO)
   find_package(pinocchio REQUIRED)
 endif()
 
-# nlohmann-json is header-only. We vendor it under third_party/nlohmann and use
-# that copy directly. This keeps the include set self-contained and, crucially,
-# avoids putting a broad host include dir (e.g. /opt/homebrew/include) on the
-# compile line — that directory also contains host Pinocchio headers, which
-# would shadow the Android install's headers during cross-compilation.
-add_library(nlohmann_json INTERFACE)
-add_library(nlohmann_json::nlohmann_json ALIAS nlohmann_json)
-target_include_directories(nlohmann_json INTERFACE
-  "${CMAKE_CURRENT_SOURCE_DIR}/third_party")
-message(STATUS "nlohmann-json: vendored (third_party/nlohmann)")
+# nlohmann-json via FetchContent (cmake/nlohmann_json.cmake at the repo root),
+# which exposes the nlohmann_json::nlohmann_json target. The fetched include dir
+# is json-specific (not a broad host dir), so it does not shadow the Pinocchio
+# headers during Android cross-compilation.
+include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/nlohmann_json.cmake")
 
 set(RETARGETING_SOURCES
   src/core/lie.cpp
@@ -124,7 +119,7 @@ else()
 endif()
 
 if(RETARGETING_BUILD_DEMO)
-  add_executable(upper_body_demo apps/upper_body_demo.cpp)
+  add_executable(upper_body_demo examples/upper_body_demo.cpp)
   target_link_libraries(upper_body_demo PRIVATE retargeting)
 
   # The MuJoCo wheel dylib records its install name as a framework path but ships
@@ -141,7 +136,7 @@ if(RETARGETING_BUILD_DEMO)
 endif()
 
 if(RETARGETING_BUILD_DEMO)
-  add_executable(retarget_probe apps/retarget_probe.cpp)
+  add_executable(retarget_probe examples/retarget_probe.cpp)
   target_link_libraries(retarget_probe PRIVATE retargeting)
   if(APPLE AND RETARGETING_WITH_MUJOCO)
     get_filename_component(_mj_name "${MUJOCO_LIB}" NAME)
@@ -153,7 +148,7 @@ if(RETARGETING_BUILD_DEMO)
 endif()
 
 if(RETARGETING_BUILD_DEMO)
-  add_executable(retarget_align apps/retarget_align.cpp)
+  add_executable(retarget_align examples/retarget_align.cpp)
   target_link_libraries(retarget_align PRIVATE retargeting)
   if(APPLE AND RETARGETING_WITH_MUJOCO)
     get_filename_component(_mj_name "${MUJOCO_LIB}" NAME)
@@ -165,7 +160,7 @@ if(RETARGETING_BUILD_DEMO)
 endif()
 
 if(RETARGETING_BUILD_DEMO)
-  add_executable(spatialmp4_to_g1 apps/spatialmp4_to_g1.cpp)
+  add_executable(spatialmp4_to_g1 examples/spatialmp4_to_g1.cpp)
   target_link_libraries(spatialmp4_to_g1 PRIVATE retargeting)
   if(APPLE AND RETARGETING_WITH_MUJOCO)
     get_filename_component(_mj_name "${MUJOCO_LIB}" NAME)
