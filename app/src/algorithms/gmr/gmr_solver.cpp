@@ -76,6 +76,13 @@ GmrSolver::GmrSolver(KinematicsBackendKind backend, const std::string& robot_xml
   double ground_height = cfg["ground_height"].get<double>();
   ground_ = ground_height * Eigen::Vector3d(0, 0, 1);
 
+  // Optional null-space posture regularization toward qpos0 (default 0 = off, so
+  // the original Python-aligned behavior is preserved unless a config opts in).
+  // GMR_POSTURE_WEIGHT env var overrides for quick tuning.
+  if (cfg.contains("posture_weight"))
+    posture_weight_ = cfg["posture_weight"].get<double>();
+  if (const char* pw = std::getenv("GMR_POSTURE_WEIGHT")) posture_weight_ = std::atof(pw);
+
   for (auto& [name, val] : cfg["human_scale_table"].items())
     human_scale_table_[name] = val.get<double>() * ratio;
 
@@ -268,6 +275,22 @@ Eigen::VectorXd GmrSolver::solve_ik(const std::vector<Task>& tasks) const {
     H.noalias() += weighted_jacobian.transpose() * weighted_jacobian;
     if (mu > 0.0) H.diagonal().array() += mu;
     c.noalias() -= weighted_jacobian.transpose() * weighted_error;
+  }
+
+  // Posture regularization: bias the free (non-locked) joint velocities toward
+  // the symmetric rest qpos0. The position tasks leave the arm swivel
+  // (shoulder_yaw) a near-free null-space direction; without this it resolves
+  // asymmetrically (L != R) and wanders (jitter). Small weight -> acts only in
+  // the null space, leaving the position-constrained DoFs to the tasks.
+  if (posture_weight_ > 0.0) {
+    const int locked_nv = locked_qpos_count_ > 0 ? locked_qpos_count_ - 1 : 0;
+    const Eigen::VectorXd q0 = backend_->qpos0();
+    for (int v = locked_nv; v < nv; ++v) {
+      const int qi = v + 1;  // hinge qpos index = v index + 1 (free base: 7 qpos / 6 nv)
+      if (qi >= q0.size()) break;
+      H(v, v) += posture_weight_;
+      c(v) -= posture_weight_ * (q0(qi) - qpos_(qi));
+    }
   }
 
   Eigen::VectorXd lb, ub;

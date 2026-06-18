@@ -103,7 +103,9 @@ if [[ "$(adb get-state 2>/dev/null)" != "device" ]]; then
 fi
 
 N="${FRAMES:-200}"; FPS="${FPS:-30}"; H="${HEIGHT:-1.75}"
-REF="data/reference/qpos_upper_body_g1_f${N}_fps${FPS}_h${H}.csv"
+# Strip a fractional FPS to match the checked-in reference filename (fps30, not
+# fps30.0) — same normalization as build_desktop.sh.
+REF="data/reference/qpos_upper_body_g1_f${N}_fps${FPS%.*}_h${H}.csv"
 # Meshless MJCF: MuJoCo loads the kinematic tree without the 52MB STL meshes.
 ROBOT="data/robot/unitree_g1/g1_mocap_29dof_nomesh.xml"
 
@@ -112,11 +114,23 @@ adb shell "rm -rf $DEVICE_DIR && mkdir -p $DEVICE_DIR"
 adb push "$STAGE/." "$DEVICE_DIR" >/dev/null
 adb shell "chmod 755 $DEVICE_DIR/upper_body_demo"
 
+# Only verify against a reference that actually exists (staged from the host
+# data/ tree); otherwise just run. Mirrors build_desktop.sh's [[ -f ]] guard.
+VERIFY_ARG=""
+if [[ -f "$REF" ]]; then VERIFY_ARG="--verify $REF"
+else echo "[device] no reference $REF; running without --verify"; fi
+
 echo "[device] running upper_body_demo (backend=mujoco, frames=$N) ..."
-adb shell "cd $DEVICE_DIR && LD_LIBRARY_PATH=$DEVICE_DIR/libs ./upper_body_demo \
+# adb shell does not reliably propagate the remote exit status across all
+# platform-tools versions, so capture it explicitly via a trailing marker —
+# otherwise a failed --verify would be reported as exit=0 (silent CI pass).
+RUN_CMD="cd $DEVICE_DIR && LD_LIBRARY_PATH=$DEVICE_DIR/libs ./upper_body_demo \
   --backend mujoco --frames $N --fps $FPS --human_height $H \
   --robot_xml $ROBOT --ik_config data/ik_configs/quest3_upper_to_g1.json \
-  --out $DEVICE_DIR/qpos_device.csv --verify $REF"
-RC=$?
+  --out $DEVICE_DIR/qpos_device.csv $VERIFY_ARG; echo __RC=\$?"
+DEV_OUT="$(adb shell "$RUN_CMD" || true)"
+printf '%s\n' "$DEV_OUT" | grep -v '^__RC=' || true
+RC="$(printf '%s\n' "$DEV_OUT" | sed -n 's/.*__RC=\([0-9][0-9]*\).*/\1/p' | tail -1)"
+RC="${RC:-1}"
 echo "[device] exit=$RC"
-exit $RC
+exit "$RC"

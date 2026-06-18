@@ -37,6 +37,7 @@ for bin in ffprobe ffmpeg; do
   command -v "$bin" >/dev/null || { echo "ERROR: $bin not on PATH" >&2; exit 1; }
 done
 [[ -x "$RENDER_PY" ]] || { echo "ERROR: render python not found: $RENDER_PY (set RENDER_PY)" >&2; exit 1; }
+[[ -f "$RENDER_MODEL" ]] || { echo "ERROR: render model not found: $RENDER_MODEL (set RENDER_MODEL=)" >&2; exit 1; }
 
 mkdir -p "$OUT_DIR"
 BODY_JSONL="$OUT_DIR/body.jsonl"
@@ -53,6 +54,9 @@ echo "[1/3] extract body pose: $MP4"
 "$RENDER_PY" tools/extract_spatialmp4_body_joints.py "$MP4" --output "$BODY_JSONL"
 N_FRAMES="$(wc -l < "$BODY_JSONL" | tr -d ' ')"
 echo "       -> $BODY_JSONL ($N_FRAMES frames)"
+# The extractor silently skips frames with no mapped upper-body joints; an empty
+# body.jsonl would otherwise sail through retarget/render and report a bogus OK.
+[[ "${N_FRAMES:-0}" -gt 0 ]] || { echo "ERROR: extractor produced 0 mapped frames from $MP4 (no body_joints track, or HJNT mismatch)" >&2; exit 1; }
 
 # --- 2. retarget to G1 ----------------------------------------------------
 echo "[2/3] retarget to G1"

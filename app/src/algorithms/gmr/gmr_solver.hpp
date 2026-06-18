@@ -95,6 +95,10 @@ class GmrSolver {
   std::map<std::string, Eigen::Vector4d> rot_offsets1_;
 
   double config_gain_ = 0.95;
+  // Null-space posture regularization toward qpos0 for the free joints. The
+  // position-only tasks leave the arm swivel (shoulder_yaw) nearly unconstrained,
+  // so without this it resolves asymmetrically (L != R) and wanders (jitter).
+  double posture_weight_ = 0.0;
   int locked_qpos_count_ = 0;
   bool freeze_locked_in_solve_ = false;
   Eigen::VectorXd locked_qpos_;  // held values of qpos[0:locked_qpos_count_]

@@ -5,3 +5,6 @@ build-*/
 /*.csv
 data/.DS_Store
 data/spatialmp4/
+
+__pycache__
+*.pyc
