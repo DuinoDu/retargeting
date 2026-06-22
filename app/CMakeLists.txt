@@ -32,6 +32,7 @@ endif()
 option(RETARGETING_WITH_PINOCCHIO "Build the Pinocchio kinematics backend" ON)
 option(RETARGETING_WITH_MUJOCO "Build the MuJoCo kinematics backend" ON)
 option(RETARGETING_BUILD_DEMO "Build the upper-body validation demo" ON)
+option(RETARGETING_BUILD_RERUN "Build Rerun visualization tools" OFF)
 if(RETARGETING_IS_ANDROID)
   set(RETARGETING_WITH_PINOCCHIO OFF CACHE BOOL "" FORCE)  # android pinocchio has no MJCF parser
 endif()
@@ -168,5 +169,21 @@ if(RETARGETING_BUILD_DEMO)
       COMMAND install_name_tool -change
         "@rpath/mujoco.framework/Versions/A/${_mj_name}" "${MUJOCO_LIB}"
         "$<TARGET_FILE:spatialmp4_to_g1>" VERBATIM)
+  endif()
+endif()
+
+if(RETARGETING_BUILD_RERUN)
+  if(NOT RETARGETING_WITH_MUJOCO)
+    message(FATAL_ERROR "RETARGETING_BUILD_RERUN requires RETARGETING_WITH_MUJOCO=ON")
+  endif()
+  include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/rerun.cmake")
+  add_executable(spatialmp4_g1_rerun examples/spatialmp4_g1_rerun.cpp)
+  target_link_libraries(spatialmp4_g1_rerun PRIVATE retargeting rerun_sdk)
+  if(APPLE AND RETARGETING_WITH_MUJOCO)
+    get_filename_component(_mj_name "${MUJOCO_LIB}" NAME)
+    add_custom_command(TARGET spatialmp4_g1_rerun POST_BUILD
+      COMMAND install_name_tool -change
+        "@rpath/mujoco.framework/Versions/A/${_mj_name}" "${MUJOCO_LIB}"
+        "$<TARGET_FILE:spatialmp4_g1_rerun>" VERBATIM)
   endif()
 endif()

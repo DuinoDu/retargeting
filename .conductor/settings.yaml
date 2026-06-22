@@ -8,7 +8,8 @@ worktree:
   sync_branch: false
   sync_submodules: true
   # When .gitmodules exists, initialize/update submodules in task worktrees.
-  symlink: []
+  symlink:
+    - data/spatialmp4
   # Example: symlink paths from the parent workspace into each worktree
   # symlink:
   #   - node_modules

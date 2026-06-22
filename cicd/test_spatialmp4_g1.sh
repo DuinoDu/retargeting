@@ -10,9 +10,13 @@
 #                 (build/spatialmp4_to_g1 — the C++ retargeting pipeline)
 #   3. render   : robot_solution.jsonl -> g1.mp4 (MuJoCo offscreen renderer)
 #                 (tools/render_g1.py, run under the GMR venv python)
+#   4. rerun    : normalized GMR VR pose + retargeted robot pose -> .rrd
+#                 (build/spatialmp4_g1_rerun, optional; set RERUN_VIS=off to skip)
 #
 # Prerequisites: ffmpeg/ffprobe on PATH, and a Python with mujoco + imageio
 # (defaults to the GMR venv; override with RENDER_PY=/path/to/python).
+# Rerun visualization uses the C++ SDK via cmake/rerun.cmake.
+# RERUN_VIS can be auto, off, rrd, spawn, or connect.
 #
 # Usage: cicd/test_spatialmp4_g1.sh [session_mp4] [out_dir]
 set -euo pipefail
@@ -24,8 +28,9 @@ cd "$REPO_ROOT"
 MP4="${1:-data/spatialmp4/20260622_083748.mp4}"
 OUT_DIR="${2:-build/spatialmp4_g1}"
 RENDER_PY="${RENDER_PY:-$HOME/.cache/install-x/GMR/.venv/bin/python}"
-FPS="${FPS:-}"
 RETARGET_MAX_JOINT_VEL_DEG_S="${RETARGET_MAX_JOINT_VEL_DEG_S:-180}"
+RERUN_VIS="${RERUN_VIS:-auto}"
+FPS="${FPS:-30}"
 
 ROBOT_XML="data/robot/unitree_g1/g1_mocap_29dof_nomesh.xml"
 IK_CONFIG="data/ik_configs/quest3_upper_to_g1.json"
@@ -42,16 +47,41 @@ done
 
 mkdir -p "$OUT_DIR"
 BODY_JSONL="$OUT_DIR/body.jsonl"
+NORMALIZED_JSONL="$OUT_DIR/normalized_gmr.jsonl"
 SOLUTION_JSONL="$OUT_DIR/robot_solution.jsonl"
 OUT_MP4="$OUT_DIR/g1.mp4"
+RERUN_RRD="$OUT_DIR/vr_pose_and_retargeted_robot.rrd"
 
-# --- 0. build the retargeting binary --------------------------------------
-cmake -S app -B build -DCMAKE_BUILD_TYPE=Release >/dev/null
-cmake --build build --target spatialmp4_to_g1 -j >/dev/null
+# --- 0. build the retargeting binaries ------------------------------------
+case "$RERUN_VIS" in
+  auto|off|rrd|spawn|connect) ;;
+  *) echo "ERROR: RERUN_VIS must be auto, off, rrd, spawn, or connect; got '$RERUN_VIS'" >&2; exit 1 ;;
+esac
+
+RERUN_READY=0
+if [[ "$RERUN_VIS" == "off" ]]; then
+  cmake -S app -B build -DCMAKE_BUILD_TYPE=Release -DRETARGETING_BUILD_RERUN=OFF >/dev/null
+  cmake --build build --target spatialmp4_to_g1 -j >/dev/null
+else
+  if cmake -S app -B build -DCMAKE_BUILD_TYPE=Release -DRETARGETING_BUILD_RERUN=ON >/dev/null &&
+     cmake --build build --target spatialmp4_to_g1 spatialmp4_g1_rerun -j >/dev/null; then
+    RERUN_READY=1
+  elif [[ "$RERUN_VIS" == "auto" ]]; then
+    echo "[build] Rerun C++ target unavailable; continuing without Rerun visualization"
+    cmake -S app -B build -DCMAKE_BUILD_TYPE=Release -DRETARGETING_BUILD_RERUN=OFF >/dev/null
+    cmake --build build --target spatialmp4_to_g1 -j >/dev/null
+  else
+    echo "ERROR: failed to build spatialmp4_g1_rerun via cmake/rerun.cmake" >&2
+    exit 1
+  fi
+fi
 echo "[build] spatialmp4_to_g1 ready"
+if [[ "$RERUN_READY" == "1" ]]; then
+  echo "[build] spatialmp4_g1_rerun ready"
+fi
 
 # --- 1. extract VR body pose from the mp4 ---------------------------------
-echo "[1/3] extract body pose: $MP4"
+echo "[1/4] extract body pose: $MP4"
 "$RENDER_PY" tools/extract_spatialmp4_body_joints.py "$MP4" --output "$BODY_JSONL"
 N_FRAMES="$(wc -l < "$BODY_JSONL" | tr -d ' ')"
 echo "       -> $BODY_JSONL ($N_FRAMES frames)"
@@ -60,20 +90,47 @@ echo "       -> $BODY_JSONL ($N_FRAMES frames)"
 [[ "${N_FRAMES:-0}" -gt 0 ]] || { echo "ERROR: extractor produced 0 mapped frames from $MP4 (no body_joints track, or HJNT mismatch)" >&2; exit 1; }
 
 # --- 2. retarget to G1 ----------------------------------------------------
-echo "[2/3] retarget to G1"
+echo "[2/4] retarget to G1"
 ./build/spatialmp4_to_g1 "$BODY_JSONL" \
   --save_jsonl "$SOLUTION_JSONL" \
   --robot_xml "$ROBOT_XML" --ik_config "$IK_CONFIG" \
-  --max_joint_velocity_deg_s "$RETARGET_MAX_JOINT_VEL_DEG_S"
+  --max_joint_velocity_deg_s "$RETARGET_MAX_JOINT_VEL_DEG_S" \
+  --normalized "$NORMALIZED_JSONL"
 echo "       -> $SOLUTION_JSONL"
+echo "       -> $NORMALIZED_JSONL"
 
 # --- 3. render the G1 visualization ---------------------------------------
-echo "[3/3] render G1 visualization"
+echo "[3/4] render G1 visualization"
 RENDER_ARGS=("$SOLUTION_JSONL" --model "$RENDER_MODEL" --out "$OUT_MP4")
 if [[ -n "$FPS" ]]; then
   RENDER_ARGS+=(--fps "$FPS")
 fi
 "$RENDER_PY" tools/render_g1.py "${RENDER_ARGS[@]}"
 
+# --- 4. write/open Rerun 3D visualization ---------------------------------
+if [[ "$RERUN_READY" == "1" ]]; then
+  echo "[4/4] Rerun 3D visualization ($RERUN_VIS)"
+  RERUN_ARGS=(./build/spatialmp4_g1_rerun "$NORMALIZED_JSONL" "$SOLUTION_JSONL" --model "$RENDER_MODEL")
+  case "$RERUN_VIS" in
+    auto|rrd)
+      RERUN_ARGS+=(--out "$RERUN_RRD")
+      ;;
+    spawn)
+      RERUN_ARGS+=(--spawn)
+      ;;
+    connect)
+      RERUN_ARGS+=(--connect)
+      ;;
+  esac
+  "${RERUN_ARGS[@]}"
+elif [[ "$RERUN_VIS" == "auto" ]]; then
+  echo "[4/4] Rerun visualization skipped (C++ target unavailable)"
+else
+  echo "[4/4] Rerun visualization skipped (RERUN_VIS=off)"
+fi
+
 echo
 echo "OK: $OUT_MP4"
+if [[ -f "$RERUN_RRD" ]]; then
+  echo "OK: $RERUN_RRD"
+fi
