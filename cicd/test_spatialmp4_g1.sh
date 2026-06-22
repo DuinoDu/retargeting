@@ -21,7 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
-MP4="${1:-data/spatialmp4/20260613_164353.mp4}"
+MP4="${1:-data/spatialmp4/20260622_083748.mp4}"
 OUT_DIR="${2:-build/spatialmp4_g1}"
 RENDER_PY="${RENDER_PY:-$HOME/.cache/install-x/GMR/.venv/bin/python}"
 FPS="${FPS:-30}"
