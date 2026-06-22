@@ -14,10 +14,12 @@
 //   spatialmp4_to_g1 <body.jsonl> --save_jsonl <out.jsonl>
 //       [--robot_xml <g1_mocap_nomesh.xml>] [--ik_config <quest3_upper_to_g1.json>]
 //       [--human_height 1.75] [--pelvis_height 0.88] [--no_heading_align]
+//       [--max_joint_velocity_deg_s <deg/s>]
 //       [--normalized <gmr.jsonl>] [--compare <ref_robot_solution.jsonl>]
 #include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -48,6 +50,8 @@ const std::vector<std::string> kJointNames = {
 // Clamp set for the spatialmp4 config: waist roll/pitch (qpos 20,21) + the 6
 // wrist joints (26,27,28, 33,34,35). Legs are the locked prefix (19).
 const std::vector<int> kClampQpos = {20, 21, 26, 27, 28, 33, 34, 35};
+
+constexpr double kFallbackFrameDt = 1.0 / 30.0;
 
 // OpenXR -> GMR position: OPENXR_TO_GMR @ (x,y,z) = (-z, -x, y).
 Eigen::Vector3d openxr_to_gmr(const Eigen::Vector3d& p) {
@@ -104,6 +108,13 @@ std::vector<RawFrame> load_body_jsonl(const std::string& path) {
   return frames;
 }
 
+double clamp_delta(double prev, double next, double max_delta) {
+  double delta = next - prev;
+  if (delta > max_delta) return prev + max_delta;
+  if (delta < -max_delta) return prev - max_delta;
+  return next;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -116,6 +127,7 @@ int main(int argc, char** argv) {
   std::string robot_xml = "data/robot/unitree_g1/g1_mocap_29dof_nomesh.xml";
   std::string ik_config = "data/ik_configs/quest3_upper_to_g1.json";
   double human_height = 1.75, pelvis_height = 0.88;
+  double max_joint_velocity_deg_s = 0.0;
   bool align_heading = true;
   for (int i = 2; i < argc; ++i) {
     std::string a = argv[i];
@@ -127,6 +139,7 @@ int main(int argc, char** argv) {
     else if (a == "--ik_config") ik_config = next();
     else if (a == "--human_height") human_height = std::stod(next());
     else if (a == "--pelvis_height") pelvis_height = std::stod(next());
+    else if (a == "--max_joint_velocity_deg_s") max_joint_velocity_deg_s = std::stod(next());
     else if (a == "--no_heading_align") align_heading = false;
   }
 
@@ -182,6 +195,8 @@ int main(int argc, char** argv) {
 
   printf("loaded %zu frames; heading_yaw=%.2f deg; pelvis_height=%.2f\n",
          raw.size(), heading_yaw * 180.0 / M_PI, pelvis_height);
+  if (max_joint_velocity_deg_s > 0.0)
+    printf("joint velocity limit: %.1f deg/s\n", max_joint_velocity_deg_s);
 
   std::ofstream out(save_path);
   std::ofstream norm;
@@ -198,6 +213,9 @@ int main(int argc, char** argv) {
     }
   }
   double max_diff = 0.0; int worst_frame = -1; std::string worst_joint;
+  const double max_joint_velocity_rad_s = max_joint_velocity_deg_s * M_PI / 180.0;
+  Eigen::VectorXd prev_limited_q;
+  double prev_timestamp_s = std::numeric_limits<double>::quiet_NaN();
 
   for (size_t fi = 0; fi < raw.size(); ++fi) {
     std::vector<Joint> aligned;
@@ -208,6 +226,17 @@ int main(int argc, char** argv) {
       sf[j.name] = p;
     }
     Eigen::VectorXd q = rt->step(sf);  // length 36
+    if (max_joint_velocity_rad_s > 0.0 && prev_limited_q.size() == q.size()) {
+      double frame_dt = raw[fi].timestamp_s - prev_timestamp_s;
+      if (!(frame_dt > 0.0) || !std::isfinite(frame_dt)) frame_dt = kFallbackFrameDt;
+      const double max_delta = max_joint_velocity_rad_s * frame_dt;
+      for (int qi = 7; qi < q.size(); ++qi) {
+        q[qi] = clamp_delta(prev_limited_q[qi], q[qi], max_delta);
+      }
+      rt->set_configuration(q);
+    }
+    prev_limited_q = q;
+    prev_timestamp_s = raw[fi].timestamp_s;
 
     // robot_solution.jsonl record
     json rec;

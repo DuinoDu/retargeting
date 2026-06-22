@@ -19,6 +19,7 @@ cmake -S . -B build && cmake --build build --target spatialmp4_to_g1 -j
 
 ./build/spatialmp4_to_g1 <body.jsonl> \
     --save_jsonl out_robot_solution.jsonl \
+    --max_joint_velocity_deg_s 180 \
     --normalized out_gmr.jsonl \
     --compare <python_robot_solution.jsonl>
 ```
@@ -35,6 +36,10 @@ Key details replicated from Python (all verified against the reference):
   `pelvis_height` (0.88).
 - Freeze set: legs (locked prefix 19) + wrists + waist roll/pitch (clamp-after),
   leaving the arms + waist-yaw free.
+- Optional `--max_joint_velocity_deg_s` limits per-frame robot joint jumps using
+  the body-pose timestamps and feeds the limited qpos back into the next IK
+  frame. The CI spatialmp4 test enables `180` by default to suppress IK branch
+  switches on noisy Quest body-pose frames.
 
 > Note: the **orientation matters** even though the IK config uses position-only
 > tasks — the SE3 IK error couples the position tangent to the target rotation
@@ -44,8 +49,10 @@ Key details replicated from Python (all verified against the reference):
 
 ```bash
 ~/.cache/install-x/GMR/.venv/bin/python tools/render_g1.py \
-    out_robot_solution.jsonl --out g1.mp4 --fps 30
+    out_robot_solution.jsonl --out g1.mp4
 ```
 
 Renders the G1 (g1_mocap_29dof model) from the per-frame `joint_q`. Render the
-C++ and Python solutions and diff the videos to confirm visual parity.
+C++ and Python solutions and diff the videos to confirm visual parity. When
+`timestamp_ns` is present, the renderer infers FPS from the solution timestamps;
+pass `--fps` only to force a specific playback rate.

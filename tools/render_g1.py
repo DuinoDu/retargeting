@@ -7,7 +7,7 @@ frozen at the model rest pose; qpos[7:36] are the 29 actuated joints in order.
 
 Usage:
   render_g1.py <robot_solution.jsonl> --out g1.mp4 \
-      [--model <g1_mocap_29dof.xml>] [--fps 30] [--width 640] [--height 480]
+      [--model <g1_mocap_29dof.xml>] [--fps <fps>] [--width 640] [--height 480]
 
 Run with the GMR venv python (has mujoco + imageio):
   ~/.cache/install-x/GMR/.venv/bin/python render_g1.py ...
@@ -22,12 +22,29 @@ import numpy as np
 
 def load_solution(path):
     qs = []
+    timestamps = []
     with open(path) as f:
         for line in f:
             line = line.strip()
             if line:
-                qs.append(np.asarray(json.loads(line)["joint_q"], dtype=float))
-    return qs
+                rec = json.loads(line)
+                qs.append(np.asarray(rec["joint_q"], dtype=float))
+                if "timestamp_ns" in rec:
+                    timestamps.append(float(rec["timestamp_ns"]) * 1e-9)
+                elif "timestamp_s" in rec:
+                    timestamps.append(float(rec["timestamp_s"]))
+                else:
+                    timestamps.append(None)
+    return qs, timestamps
+
+
+def infer_fps(timestamps):
+    valid = [t for t in timestamps if t is not None]
+    if len(valid) == len(timestamps) and len(valid) > 1:
+        duration = valid[-1] - valid[0]
+        if duration > 0:
+            return (len(valid) - 1) / duration
+    return 30.0
 
 
 def main():
@@ -36,7 +53,8 @@ def main():
     ap.add_argument("--model", default=os.path.expanduser(
         "~/.cache/install-x/GMR/assets/unitree_g1/g1_mocap_29dof.xml"))
     ap.add_argument("--out", required=True)
-    ap.add_argument("--fps", type=float, default=30.0)
+    ap.add_argument("--fps", type=float, default=None,
+                    help="Override output FPS; defaults to the rate inferred from timestamps.")
     ap.add_argument("--width", type=int, default=640)
     ap.add_argument("--height", type=int, default=480)
     ap.add_argument("--max_frames", type=int, default=0)
@@ -50,11 +68,13 @@ def main():
     mujoco.mj_resetData(model, data)
     base_qpos = data.qpos.copy()  # rest config; base at [0:7]
 
-    sols = load_solution(args.solution_jsonl)
+    sols, timestamps = load_solution(args.solution_jsonl)
     if args.max_frames > 0:
         sols = sols[: args.max_frames]
+        timestamps = timestamps[: args.max_frames]
     if not sols:
         sys.exit("no frames in solution jsonl")
+    fps = args.fps if args.fps is not None else infer_fps(timestamps)
 
     n_joints = model.nq - 7
     renderer = mujoco.Renderer(model, height=args.height, width=args.width)
@@ -73,8 +93,8 @@ def main():
         mujoco.mj_forward(model, data)
         renderer.update_scene(data, camera=cam)
         frames.append(renderer.render())
-    imageio.mimsave(args.out, frames, fps=args.fps)
-    print(f"wrote {len(frames)} frames -> {args.out} ({args.width}x{args.height} @ {args.fps}fps)")
+    imageio.mimsave(args.out, frames, fps=fps)
+    print(f"wrote {len(frames)} frames -> {args.out} ({args.width}x{args.height} @ {fps:.3f}fps)")
 
 
 if __name__ == "__main__":

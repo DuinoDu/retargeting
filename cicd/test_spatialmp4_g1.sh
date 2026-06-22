@@ -24,7 +24,8 @@ cd "$REPO_ROOT"
 MP4="${1:-data/spatialmp4/20260622_083748.mp4}"
 OUT_DIR="${2:-build/spatialmp4_g1}"
 RENDER_PY="${RENDER_PY:-$HOME/.cache/install-x/GMR/.venv/bin/python}"
-FPS="${FPS:-30}"
+FPS="${FPS:-}"
+RETARGET_MAX_JOINT_VEL_DEG_S="${RETARGET_MAX_JOINT_VEL_DEG_S:-180}"
 
 ROBOT_XML="data/robot/unitree_g1/g1_mocap_29dof_nomesh.xml"
 IK_CONFIG="data/ik_configs/quest3_upper_to_g1.json"
@@ -62,13 +63,17 @@ echo "       -> $BODY_JSONL ($N_FRAMES frames)"
 echo "[2/3] retarget to G1"
 ./build/spatialmp4_to_g1 "$BODY_JSONL" \
   --save_jsonl "$SOLUTION_JSONL" \
-  --robot_xml "$ROBOT_XML" --ik_config "$IK_CONFIG"
+  --robot_xml "$ROBOT_XML" --ik_config "$IK_CONFIG" \
+  --max_joint_velocity_deg_s "$RETARGET_MAX_JOINT_VEL_DEG_S"
 echo "       -> $SOLUTION_JSONL"
 
 # --- 3. render the G1 visualization ---------------------------------------
 echo "[3/3] render G1 visualization"
-"$RENDER_PY" tools/render_g1.py "$SOLUTION_JSONL" \
-  --model "$RENDER_MODEL" --out "$OUT_MP4" --fps "$FPS"
+RENDER_ARGS=("$SOLUTION_JSONL" --model "$RENDER_MODEL" --out "$OUT_MP4")
+if [[ -n "$FPS" ]]; then
+  RENDER_ARGS+=(--fps "$FPS")
+fi
+"$RENDER_PY" tools/render_g1.py "${RENDER_ARGS[@]}"
 
 echo
 echo "OK: $OUT_MP4"
