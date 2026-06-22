@@ -8,3 +8,10 @@ data/spatialmp4/
 
 __pycache__
 *.pyc
+
+.conductor-*.log
+.conductor/worktrees/
+.conductor/state/
+conductor.log
+conductor-terminal.log
+.conductor/state

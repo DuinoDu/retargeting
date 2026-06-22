@@ -1,0 +1,15 @@
+# icon: "🚀"
+# Optional icon shown on the project card in the web project list.
+# Accepts an emoji, an http(s):// URL, or a path to a local image
+# (svg/png/jpg/gif/webp/ico/avif) relative to this .conductor/ directory.
+# Remove this line to use the default folder icon.
+
+worktree:
+  sync_branch: false
+  sync_submodules: true
+  # When .gitmodules exists, initialize/update submodules in task worktrees.
+  symlink: []
+  # Example: symlink paths from the parent workspace into each worktree
+  # symlink:
+  #   - node_modules
+  #   - .env
