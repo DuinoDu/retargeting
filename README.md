@@ -6,6 +6,8 @@ so that the teleoperation *use case* and the underlying *algorithm* evolve
 independently, and so it can be driven from a Godot GDExtension that feeds the
 headset's body/hand poses in each frame.
 
+Current release: `0.1.0`.
+
 The first algorithm is a C++ port of **GMR** (General Motion Retargeting),
 carried over from the validated standalone port. Its output is **byte-for-byte
 identical** to that port on both kinematics backends, and therefore aligned with
@@ -92,7 +94,9 @@ the MuJoCo dylib.
 
 Builds `libretargeting.a` + `upper_body_demo`, runs the synthetic Quest3
 upper-body source through `UpperBodyRetargeter`, and verifies against the
-checked-in reference:
+checked-in reference. The validation scripts set `GMR_POSTURE_WEIGHT=0` so this
+golden test stays aligned with the original Python reference; the SpatialMP4 G1
+path keeps the default posture regularizer for steadier real body-pose captures:
 
 ```
 [run] backend=pinocchio ...
@@ -126,6 +130,23 @@ VERIFY: max abs diff vs reference = 4.92661e-14  -> PASS ✓
 ```
 
 i.e. the arm64 device reproduces the desktop/Python result to machine precision.
+
+## Versioning
+
+The root `VERSION` file is the single source of truth. CMake reads it into
+`project(retargeting VERSION ...)` and generates `retargeting/version.hpp`, so
+library users and command-line tools report the same version:
+
+```bash
+./build/upper_body_demo --version
+./build/spatialmp4_to_g1 --version
+```
+
+Create a local annotated release tag from the checked-in version with:
+
+```bash
+cicd/release.sh
+```
 
 ### Backends
 

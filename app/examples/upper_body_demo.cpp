@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "retargeting/retargeter.hpp"
+#include "retargeting/version.hpp"
 #include "sources/quest3_source.hpp"
 
 namespace {
@@ -58,7 +59,8 @@ int main(int argc, char** argv) {
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
     auto next = [&]() { return std::string(argv[++i]); };
-    if (a == "--robot_xml") cfg.robot_xml = next();
+    if (a == "--version") { std::cout << "retargeting " << retargeting::kVersion << "\n"; return 0; }
+    else if (a == "--robot_xml") cfg.robot_xml = next();
     else if (a == "--ik_config") cfg.ik_config_json = next();
     else if (a == "--out") out_csv = next();
     else if (a == "--verify") verify_csv = next();

@@ -35,6 +35,6 @@ for BK in pinocchio mujoco; do
         --robot_xml "$XML" --ik_config data/ik_configs/quest3_upper_to_g1.json
         --out "build/qpos_${BK}.csv")
   [[ -f "$REF" ]] && ARGS+=(--verify "$REF")
-  ./build/upper_body_demo "${ARGS[@]}"
+  GMR_POSTURE_WEIGHT=0 ./build/upper_body_demo "${ARGS[@]}"
 done
 echo "done."

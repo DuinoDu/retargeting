@@ -16,12 +16,17 @@
 #include <nlohmann/json.hpp>
 
 #include "retargeting/retargeter.hpp"
+#include "retargeting/version.hpp"
 
 using json = nlohmann::json;
 using retargeting::Pose;
 using retargeting::SkeletonFrame;
 
 int main(int argc, char** argv) {
+  if (argc == 2 && std::string(argv[1]) == "--version") {
+    printf("retargeting %s\n", retargeting::kVersion);
+    return 0;
+  }
   if (argc < 5) {
     fprintf(stderr,
             "usage: %s <gmr_input.jsonl> <robot_solution.jsonl> <robot_xml> "

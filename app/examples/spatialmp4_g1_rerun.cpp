@@ -21,6 +21,8 @@
 #include <nlohmann/json.hpp>
 #include <rerun.hpp>
 
+#include "retargeting/version.hpp"
+
 using json = nlohmann::json;
 
 namespace {
@@ -238,6 +240,10 @@ struct Args {
 };
 
 Args parse_args(int argc, char** argv) {
+  if (argc == 2 && std::string(argv[1]) == "--version") {
+    printf("retargeting %s\n", retargeting::kVersion);
+    std::exit(0);
+  }
   if (argc < 3) {
     fprintf(stderr,
             "usage: %s <normalized_gmr.jsonl> <robot_solution.jsonl> "

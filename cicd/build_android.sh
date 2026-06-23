@@ -124,7 +124,7 @@ echo "[device] running upper_body_demo (backend=mujoco, frames=$N) ..."
 # adb shell does not reliably propagate the remote exit status across all
 # platform-tools versions, so capture it explicitly via a trailing marker —
 # otherwise a failed --verify would be reported as exit=0 (silent CI pass).
-RUN_CMD="cd $DEVICE_DIR && LD_LIBRARY_PATH=$DEVICE_DIR/libs ./upper_body_demo \
+RUN_CMD="cd $DEVICE_DIR && GMR_POSTURE_WEIGHT=0 LD_LIBRARY_PATH=$DEVICE_DIR/libs ./upper_body_demo \
   --backend mujoco --frames $N --fps $FPS --human_height $H \
   --robot_xml $ROBOT --ik_config data/ik_configs/quest3_upper_to_g1.json \
   --out $DEVICE_DIR/qpos_device.csv $VERIFY_ARG; echo __RC=\$?"

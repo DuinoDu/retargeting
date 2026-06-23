@@ -1,5 +1,17 @@
 cmake_minimum_required(VERSION 3.16)
-project(retargeting CXX)
+
+set(RETARGETING_VERSION_FILE "${CMAKE_CURRENT_SOURCE_DIR}/../VERSION")
+if(NOT EXISTS "${RETARGETING_VERSION_FILE}")
+  message(FATAL_ERROR "Missing VERSION file at ${RETARGETING_VERSION_FILE}")
+endif()
+file(READ "${RETARGETING_VERSION_FILE}" RETARGETING_VERSION)
+string(STRIP "${RETARGETING_VERSION}" RETARGETING_VERSION)
+if(NOT RETARGETING_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+  message(FATAL_ERROR "VERSION must be MAJOR.MINOR.PATCH, got '${RETARGETING_VERSION}'")
+endif()
+
+project(retargeting VERSION ${RETARGETING_VERSION} LANGUAGES CXX)
+message(STATUS "retargeting version: ${PROJECT_VERSION}")
 
 # Two-layer retargeting toolkit for teleoperation:
 #   * business layer  : whole-body / upper-body / hand scenarios
@@ -60,6 +72,12 @@ endif()
 # headers during Android cross-compilation.
 include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/nlohmann_json.cmake")
 
+set(RETARGETING_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+configure_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/include/retargeting/version.hpp.in"
+  "${RETARGETING_GENERATED_INCLUDE_DIR}/retargeting/version.hpp"
+  @ONLY)
+
 set(RETARGETING_SOURCES
   src/core/lie.cpp
   src/core/box_qp.cpp
@@ -69,6 +87,7 @@ set(RETARGETING_SOURCES
   src/algorithms/gmr/gmr_algorithm.cpp
   src/business/retargeter.cpp
   src/sources/quest3_source.cpp
+  src/utils/one_euro_filter.cpp
 )
 if(RETARGETING_WITH_PINOCCHIO)
   list(APPEND RETARGETING_SOURCES src/core/pinocchio_backend.cpp)
@@ -102,7 +121,8 @@ add_library(retargeting STATIC ${RETARGETING_SOURCES})
 target_include_directories(retargeting PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${CMAKE_CURRENT_SOURCE_DIR}/src
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/core)
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+  ${RETARGETING_GENERATED_INCLUDE_DIR})
 target_link_libraries(retargeting PUBLIC
   Eigen3::Eigen nlohmann_json::nlohmann_json)
 

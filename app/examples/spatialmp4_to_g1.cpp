@@ -14,7 +14,8 @@
 //   spatialmp4_to_g1 <body.jsonl> --save_jsonl <out.jsonl>
 //       [--robot_xml <g1_mocap_nomesh.xml>] [--ik_config <quest3_upper_to_g1.json>]
 //       [--human_height 1.75] [--pelvis_height 0.88] [--no_heading_align]
-//       [--max_joint_velocity_deg_s <deg/s>]
+//       [--input_one_euro_min_cutoff <hz>] [--input_one_euro_beta <value>]
+//       [--input_one_euro_d_cutoff <hz>] [--max_joint_velocity_deg_s <deg/s>]
 //       [--normalized <gmr.jsonl>] [--compare <ref_robot_solution.jsonl>]
 #include <cmath>
 #include <cstdio>
@@ -23,13 +24,18 @@
 #include <string>
 #include <vector>
 
+#include <Eigen/Dense>
 #include <nlohmann/json.hpp>
 
 #include "retargeting/retargeter.hpp"
+#include "retargeting/version.hpp"
+#include "utils/one_euro_filter.hpp"
 
 using json = nlohmann::json;
 using retargeting::Pose;
 using retargeting::SkeletonFrame;
+using retargeting::utils::NamedPose;
+using retargeting::utils::OneEuroPoseFilter;
 
 namespace {
 
@@ -70,15 +76,9 @@ Eigen::Vector4d qmul(const Eigen::Vector4d& a, const Eigen::Vector4d& b) {
 // Quaternion (wxyz) of OPENXR_TO_GMR (R.from_matrix(...).as_quat(scalar_first)).
 const Eigen::Vector4d kOpenxrToGmrQuat(0.5, 0.5, -0.5, -0.5);
 
-struct Joint {
-  std::string name;
-  Eigen::Vector3d pos;   // OpenXR position
-  Eigen::Vector4d quat;  // OpenXR orientation (w,x,y,z)
-};
-
 struct RawFrame {
   double timestamp_s = 0.0;
-  std::vector<Joint> joints;
+  std::vector<NamedPose> joints;
 };
 
 std::vector<RawFrame> load_body_jsonl(const std::string& path) {
@@ -94,7 +94,7 @@ std::vector<RawFrame> load_body_jsonl(const std::string& path) {
     for (auto& [name, rec] : r["joints"].items()) {
       auto pos = rec["position"];
       auto rot = rec["rotation"];  // xyzw (adapter quat_order)
-      Joint j;
+      NamedPose j;
       j.name = name;
       j.pos = Eigen::Vector3d(pos[0].get<double>(), pos[1].get<double>(), pos[2].get<double>());
       // xyzw -> wxyz
@@ -118,6 +118,10 @@ double clamp_delta(double prev, double next, double max_delta) {
 }  // namespace
 
 int main(int argc, char** argv) {
+  if (argc == 2 && std::string(argv[1]) == "--version") {
+    printf("retargeting %s\n", retargeting::kVersion);
+    return 0;
+  }
   if (argc < 2) {
     fprintf(stderr, "usage: %s <body.jsonl> --save_jsonl <out> [opts]\n", argv[0]);
     return 2;
@@ -128,6 +132,9 @@ int main(int argc, char** argv) {
   std::string ik_config = "data/ik_configs/quest3_upper_to_g1.json";
   double human_height = 1.75, pelvis_height = 0.88;
   double max_joint_velocity_deg_s = 0.0;
+  double input_one_euro_min_cutoff = 0.0;
+  double input_one_euro_beta = 0.0;
+  double input_one_euro_d_cutoff = 1.0;
   bool align_heading = true;
   for (int i = 2; i < argc; ++i) {
     std::string a = argv[i];
@@ -139,6 +146,9 @@ int main(int argc, char** argv) {
     else if (a == "--ik_config") ik_config = next();
     else if (a == "--human_height") human_height = std::stod(next());
     else if (a == "--pelvis_height") pelvis_height = std::stod(next());
+    else if (a == "--input_one_euro_min_cutoff") input_one_euro_min_cutoff = std::stod(next());
+    else if (a == "--input_one_euro_beta") input_one_euro_beta = std::stod(next());
+    else if (a == "--input_one_euro_d_cutoff") input_one_euro_d_cutoff = std::stod(next());
     else if (a == "--max_joint_velocity_deg_s") max_joint_velocity_deg_s = std::stod(next());
     else if (a == "--no_heading_align") align_heading = false;
   }
@@ -169,13 +179,13 @@ int main(int argc, char** argv) {
   // Anchor a frame: GMR positions relative to hips (heading-rotated, hips pinned
   // to pelvis_height) + the converted+anchored orientation. The orientation is
   // needed: the SE3 IK error couples the position tangent to the target rotation.
-  auto anchor = [&](const RawFrame& f, std::vector<Joint>& out) {
+  auto anchor = [&](const RawFrame& f, std::vector<NamedPose>& out) {
     Eigen::Vector3d hips_xr;
     if (!get(f, "Hips", hips_xr)) return false;
     Eigen::Vector3d root = openxr_to_gmr(hips_xr);
     for (auto& jin : f.joints) {
       Eigen::Vector3d r = openxr_to_gmr(jin.pos) - root;
-      Joint jo;
+      NamedPose jo;
       jo.name = jin.name;
       jo.pos = Eigen::Vector3d(r.x() * cz - r.y() * sz, r.x() * sz + r.y() * cz,
                                r.z() + pelvis_height);
@@ -197,6 +207,12 @@ int main(int argc, char** argv) {
          raw.size(), heading_yaw * 180.0 / M_PI, pelvis_height);
   if (max_joint_velocity_deg_s > 0.0)
     printf("joint velocity limit: %.1f deg/s\n", max_joint_velocity_deg_s);
+  OneEuroPoseFilter input_filter(input_one_euro_min_cutoff, input_one_euro_beta,
+                                 input_one_euro_d_cutoff);
+  if (input_filter.enabled()) {
+    printf("input OneEuro filter: min_cutoff=%.3fHz beta=%.3f d_cutoff=%.3fHz\n",
+           input_one_euro_min_cutoff, input_one_euro_beta, input_one_euro_d_cutoff);
+  }
 
   std::ofstream out(save_path);
   std::ofstream norm;
@@ -218,8 +234,9 @@ int main(int argc, char** argv) {
   double prev_timestamp_s = std::numeric_limits<double>::quiet_NaN();
 
   for (size_t fi = 0; fi < raw.size(); ++fi) {
-    std::vector<Joint> aligned;
+    std::vector<NamedPose> aligned;
     if (!anchor(raw[fi], aligned)) continue;
+    input_filter.filter(raw[fi].timestamp_s, aligned);
     SkeletonFrame sf;
     for (auto& j : aligned) {
       Pose p; p.pos = j.pos; p.quat = j.quat;

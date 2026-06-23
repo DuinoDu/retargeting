@@ -28,7 +28,10 @@ cd "$REPO_ROOT"
 MP4="${1:-data/spatialmp4/20260622_083748.mp4}"
 OUT_DIR="${2:-build/spatialmp4_g1}"
 RENDER_PY="${RENDER_PY:-$HOME/.cache/install-x/GMR/.venv/bin/python}"
-RETARGET_MAX_JOINT_VEL_DEG_S="${RETARGET_MAX_JOINT_VEL_DEG_S:-180}"
+RETARGET_MAX_JOINT_VEL_DEG_S="${RETARGET_MAX_JOINT_VEL_DEG_S:-90}"
+INPUT_ONE_EURO_MIN_CUTOFF="${INPUT_ONE_EURO_MIN_CUTOFF:-2.0}"
+INPUT_ONE_EURO_BETA="${INPUT_ONE_EURO_BETA:-0.20}"
+INPUT_ONE_EURO_D_CUTOFF="${INPUT_ONE_EURO_D_CUTOFF:-1.0}"
 RERUN_VIS="${RERUN_VIS:-auto}"
 FPS="${FPS:-30}"
 
@@ -94,6 +97,9 @@ echo "[2/4] retarget to G1"
 ./build/spatialmp4_to_g1 "$BODY_JSONL" \
   --save_jsonl "$SOLUTION_JSONL" \
   --robot_xml "$ROBOT_XML" --ik_config "$IK_CONFIG" \
+  --input_one_euro_min_cutoff "$INPUT_ONE_EURO_MIN_CUTOFF" \
+  --input_one_euro_beta "$INPUT_ONE_EURO_BETA" \
+  --input_one_euro_d_cutoff "$INPUT_ONE_EURO_D_CUTOFF" \
   --max_joint_velocity_deg_s "$RETARGET_MAX_JOINT_VEL_DEG_S" \
   --normalized "$NORMALIZED_JSONL"
 echo "       -> $SOLUTION_JSONL"

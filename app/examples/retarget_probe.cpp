@@ -7,6 +7,7 @@
 #include <string>
 
 #include "retargeting/retargeter.hpp"
+#include "retargeting/version.hpp"
 #include "sources/quest3_source.hpp"
 
 using retargeting::Pose;
@@ -60,6 +61,10 @@ static void run(const char* label, const std::map<std::string, V3>& vr,
 }
 
 int main(int argc, char** argv) {
+  if (argc == 2 && std::string(argv[1]) == "--version") {
+    printf("retargeting %s\n", retargeting::kVersion);
+    return 0;
+  }
   std::string xml = "data/robot/unitree_g1/g1_mocap_29dof_nomesh.xml";
   std::string ik = "data/ik_configs/quest3_upper_to_g1.json";
   if (argc > 1) xml = argv[1];
