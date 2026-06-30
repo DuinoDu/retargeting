@@ -6,7 +6,7 @@ so that the teleoperation *use case* and the underlying *algorithm* evolve
 independently, and so it can be driven from a Godot GDExtension that feeds the
 headset's body/hand poses in each frame.
 
-Current release: `0.1.0`.
+Current release: `0.1.1`.
 
 The first algorithm is a C++ port of **GMR** (General Motion Retargeting),
 carried over from the validated standalone port. Its output is **byte-for-byte
@@ -54,6 +54,13 @@ changes.
   - `gmr_solver.{hpp,cpp}` — the validated numerical core (QP-based differential
     IK; lie ops + box-QP solver in `src/core/`).
   - `gmr_algorithm.{hpp,cpp}` — adapts the solver to `RetargetingAlgorithm`.
+- `algorithms/dual_arm_eepose/` — pure dual-arm end-effector pose IK.
+  - Registered as `"dual_arm_eepose"`.
+  - Consumes left/right end-effector poses directly from `SkeletonFrame` keys
+    (e.g. `LeftWrist` / `RightWrist`), pins all non-arm DoFs, and uses MuJoCo
+    geom-distance collision constraints for arm-arm and arm-torso clearance.
+  - The Galbot G1 mapping lives in
+    `data/ik_configs/dual_arm_eepose_galbot_g1.json`.
 
 ### Shared kinematics core — `src/core/`
 Carried over verbatim from the validated GMR port:
@@ -102,6 +109,44 @@ path keeps the default posture regularizer for steadier real body-pose captures:
 [run] backend=pinocchio ...
 VERIFY: max abs diff vs reference = 0  -> PASS ✓
 ```
+
+## Galbot Dual-Arm EePose Test
+
+The pure dual-arm eepose path is MuJoCo-only because the collision constraint
+uses `mj_geomDistance` / `mj_jacGeom`. The test script below extracts body
+joints from a SpatialMP4 capture, converts the wrist motion to relative
+left/right TCP targets, retargets to the Galbot G1 arm joints, and replays the
+result to check the configured collision clearance. The default Galbot mapping
+uses `TARGET_MODE=frame_delta`: each frame applies the VR wrist translation
+delta in the aligned tracking frame to the previous Galbot TCP target, so the
+IK is driven incrementally rather than by an absolute VR wrist pose. For
+experiments that need strict local-frame SE(3) deltas, use
+`TARGET_MODE=se3_delta`; for comparison, `TARGET_MODE=shoulder_absolute` maps
+each frame's shoulder-relative wrist position directly to the robot base.
+
+```bash
+cicd/test_spatialmp4_galbot_dual_arm.sh \
+  /Users/duino/ws/operator/tmpdir/20260630_090309.mp4 \
+  build/galbot_dual_arm_test
+```
+
+Override the test robot with `ROBOT_XML=/path/to/galbot_g1.xml` if needed.
+The main outputs are `dual_arm_solution.jsonl` (14 arm joint commands),
+`eepose_targets.jsonl` (robot-world TCP targets), and
+`vr_pose_vs_retargeted.mp4` (left: aligned VR pose; right: retargeted Galbot
+skeleton).
+Set `VIS_MAX_FRAMES=120` for a short smoke-test render, or leave it unset to
+render the full capture.
+
+The Galbot test path keeps the joint output low-pass disabled by default for
+delta-pose control: `MAX_JOINT_VEL_DEG_S=240`, `JOINT_LOWPASS_CUTOFF=0`,
+`INPUT_ONE_EURO_MIN_CUTOFF=0.6`, and `INPUT_ONE_EURO_BETA=0.03`. The default
+`ORIENTATION_MODE=neutral` applies the translational part of the EE delta and
+keeps a stable Galbot TCP orientation from the configured neutral arm posture.
+Use `ORIENTATION_MODE=relative_wrist` only when the input capture provides a
+reliable wrist/tool orientation; the bundled SpatialMP4 body track has wrist
+joints but no palm or hand-tip direction, so full wrist quaternion delta
+tracking can create unreachable 6D targets.
 
 ## Build & run on device (Android / NDK)
 
@@ -183,5 +228,7 @@ already call it for you.
 
 - whole-body / upper-body: working on GMR; upper-body validated against the
   Python reference via the GMR port.
+- dual-arm eepose: working on MuJoCo with collision-constrained Galbot G1
+  configuration and SpatialMP4 offline test coverage.
 - hand: wired through the same interface; needs a dexterous-hand MJCF +
   hand `ik_config` (and likely a hand-specific algorithm) to produce motion.

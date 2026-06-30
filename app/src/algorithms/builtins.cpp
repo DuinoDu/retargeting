@@ -2,6 +2,7 @@
 
 #include <memory>
 
+#include "dual_arm_eepose/dual_arm_eepose_algorithm.hpp"
 #include "gmr/gmr_algorithm.hpp"
 #include "retargeting/algorithm_registry.hpp"
 
@@ -17,7 +18,10 @@ void register_builtin_algorithms() {
         return std::make_unique<gmr::GmrAlgorithm>();
       });
 
-  // Future algorithms register here (or add their own builtins TU).
+  AlgorithmRegistry::instance().register_algorithm(
+      "dual_arm_eepose", []() -> std::unique_ptr<RetargetingAlgorithm> {
+        return std::make_unique<dual_arm_eepose::DualArmEePoseAlgorithm>();
+      });
 }
 
 }  // namespace retargeting

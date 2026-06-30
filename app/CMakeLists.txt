@@ -83,6 +83,7 @@ set(RETARGETING_SOURCES
   src/core/box_qp.cpp
   src/algorithms/algorithm_registry.cpp
   src/algorithms/builtins.cpp
+  src/algorithms/dual_arm_eepose/dual_arm_eepose_algorithm.cpp
   src/algorithms/gmr/gmr_solver.cpp
   src/algorithms/gmr/gmr_algorithm.cpp
   src/business/retargeter.cpp
@@ -189,6 +190,18 @@ if(RETARGETING_BUILD_DEMO)
       COMMAND install_name_tool -change
         "@rpath/mujoco.framework/Versions/A/${_mj_name}" "${MUJOCO_LIB}"
         "$<TARGET_FILE:spatialmp4_to_g1>" VERBATIM)
+  endif()
+endif()
+
+if(RETARGETING_BUILD_DEMO AND RETARGETING_WITH_MUJOCO)
+  add_executable(spatialmp4_to_galbot_dual_arm examples/spatialmp4_to_galbot_dual_arm.cpp)
+  target_link_libraries(spatialmp4_to_galbot_dual_arm PRIVATE retargeting)
+  if(APPLE)
+    get_filename_component(_mj_name "${MUJOCO_LIB}" NAME)
+    add_custom_command(TARGET spatialmp4_to_galbot_dual_arm POST_BUILD
+      COMMAND install_name_tool -change
+        "@rpath/mujoco.framework/Versions/A/${_mj_name}" "${MUJOCO_LIB}"
+        "$<TARGET_FILE:spatialmp4_to_galbot_dual_arm>" VERBATIM)
   endif()
 endif()
 
