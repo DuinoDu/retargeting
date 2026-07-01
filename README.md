@@ -56,9 +56,10 @@ changes.
   - `gmr_algorithm.{hpp,cpp}` — adapts the solver to `RetargetingAlgorithm`.
 - `algorithms/dual_arm_eepose/` — pure dual-arm end-effector pose IK.
   - Registered as `"dual_arm_eepose"`.
-  - Consumes left/right end-effector poses directly from `SkeletonFrame` keys
-    (e.g. `LeftWrist` / `RightWrist`), pins all non-arm DoFs, and uses MuJoCo
-    geom-distance collision constraints for arm-arm and arm-torso clearance.
+  - Supports robot-world absolute EE targets and shoulder-relative EE source
+    modes from `SkeletonFrame` keys (e.g. `LeftShoulder` / `LeftWrist`),
+    pins all non-arm DoFs, and uses MuJoCo geom-distance collision constraints
+    for arm-arm and arm-torso clearance.
   - The Galbot G1 mapping lives in
     `data/ik_configs/dual_arm_eepose_galbot_g1.json`.
 
@@ -114,15 +115,19 @@ VERIFY: max abs diff vs reference = 0  -> PASS ✓
 
 The pure dual-arm eepose path is MuJoCo-only because the collision constraint
 uses `mj_geomDistance` / `mj_jacGeom`. The test script below extracts body
-joints from a SpatialMP4 capture, converts the wrist motion to relative
-left/right TCP targets, retargets to the Galbot G1 arm joints, and replays the
+joints from a SpatialMP4 capture, aligns them into a `SkeletonFrame`, and lets
+`dual_arm_eepose` retarget to the Galbot G1 arm joints before replaying the
 result to check the configured collision clearance. The default Galbot mapping
-uses `TARGET_MODE=frame_delta`: each frame applies the VR wrist translation
-delta in the aligned tracking frame to the previous Galbot TCP target, so the
-IK is driven incrementally rather than by an absolute VR wrist pose. For
-experiments that need strict local-frame SE(3) deltas, use
-`TARGET_MODE=se3_delta`; for comparison, `TARGET_MODE=shoulder_absolute` maps
-each frame's shoulder-relative wrist position directly to the robot base.
+uses `TARGET_MODE=shoulder_delta` inside the algorithm: each frame first
+expresses the wrist pose relative to the corresponding shoulder in the current
+shoulder/body frame, then applies only that relative end-effector delta to the
+previous Galbot TCP target. This keeps body motion separate from arm motion: if
+the operator walks or turns without changing the arm pose relative to the
+shoulders, the robot TCP target does not move. For experiments that need strict
+local-frame SE(3) deltas, use `TARGET_MODE=se3_delta`; `TARGET_MODE=frame_delta`
+keeps the old aligned-frame wrist delta behavior for comparison, and
+`TARGET_MODE=shoulder_absolute` maps each frame's shoulder-relative wrist
+position directly to the robot base.
 
 ```bash
 cicd/test_spatialmp4_galbot_dual_arm.sh \
@@ -140,7 +145,9 @@ render the full capture.
 
 The Galbot test path keeps the joint output low-pass disabled by default for
 delta-pose control: `MAX_JOINT_VEL_DEG_S=240`, `JOINT_LOWPASS_CUTOFF=0`,
-`INPUT_ONE_EURO_MIN_CUTOFF=0.6`, and `INPUT_ONE_EURO_BETA=0.03`. The default
+`INPUT_ONE_EURO_MIN_CUTOFF=0.6`, and `INPUT_ONE_EURO_BETA=0.03`. The OneEuro
+filter is applied after converting the capture to the selected EE source pose,
+so shoulder/body motion is not filtered into arm motion. The default
 `ORIENTATION_MODE=neutral` applies the translational part of the EE delta and
 keeps a stable Galbot TCP orientation from the configured neutral arm posture.
 Use `ORIENTATION_MODE=relative_wrist` only when the input capture provides a

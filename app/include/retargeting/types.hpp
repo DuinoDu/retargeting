@@ -37,6 +37,7 @@ struct RetargetConfig {
   double human_height = 1.75;   // actual source-subject height, for scaling.
   double damping = 1.0;         // solver damping (algorithm-specific meaning).
   KinematicsBackendKind backend = KinematicsBackendKind::Pinocchio;
+  std::map<std::string, std::string> options;  // algorithm-specific runtime overrides.
 };
 
 }  // namespace retargeting

@@ -1,10 +1,11 @@
 // Pure dual-arm end-effector pose retargeting.
 //
-// This algorithm consumes two target end-effector poses from SkeletonFrame
-// (for example "LeftWrist" and "RightWrist") and solves only the configured
-// arm joints. All other robot DoFs are pinned in the QP, making it suitable for
-// dual-arm control tasks where base/leg/head/gripper states are controlled by
-// other modules. The MuJoCo implementation also adds geom-distance collision
+// This algorithm supports robot-world absolute end-effector targets and
+// shoulder-relative source modes from SkeletonFrame keys (for example
+// "LeftShoulder" / "LeftWrist"). It solves only the configured arm joints. All
+// other robot DoFs are pinned in the QP, making it suitable for dual-arm
+// control tasks where base/leg/head/gripper states are controlled by other
+// modules. The MuJoCo implementation also adds geom-distance collision
 // avoidance constraints for arm-arm and arm-torso pairs.
 #pragma once
 
@@ -30,6 +31,7 @@ class DualArmEePoseAlgorithm : public RetargetingAlgorithm {
   int nq() const override;
   int nv() const override;
   void set_configuration(const Eigen::VectorXd& qpos) override;
+  SkeletonFrame last_targets() const;
 
  private:
   struct Impl;

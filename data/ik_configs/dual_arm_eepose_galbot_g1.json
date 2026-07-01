@@ -7,6 +7,18 @@
   "position_weight": 80.0,
   "rotation_weight": 4.0,
   "posture_weight": 0.12,
+  "source": {
+    "mode": "shoulder_delta",
+    "orientation_mode": "neutral",
+    "workspace_scale": 1.0,
+    "arm_reach_scale": 0.82,
+    "fps": 30.0,
+    "filter": {
+      "min_cutoff": 0.6,
+      "beta": 0.03,
+      "d_cutoff": 1.0
+    }
+  },
   "posture_reference": {
     "left_arm_joint1": 0.286632,
     "left_arm_joint2": -1.279879,
@@ -28,6 +40,8 @@
       "name": "left",
       "target": "LeftWrist",
       "target_aliases": ["left_eepose", "left_ee", "left_tcp"],
+      "reference_target": "LeftShoulder",
+      "base_body": "left_arm_base_link",
       "body": "left_gripper_tcp_link",
       "joint_names": [
         "left_arm_joint1",
@@ -43,6 +57,8 @@
       "name": "right",
       "target": "RightWrist",
       "target_aliases": ["right_eepose", "right_ee", "right_tcp"],
+      "reference_target": "RightShoulder",
+      "base_body": "right_arm_base_link",
       "body": "right_gripper_tcp_link",
       "joint_names": [
         "right_arm_joint1",

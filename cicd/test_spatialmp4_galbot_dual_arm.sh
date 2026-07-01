@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end offline test for the pure dual-arm eepose retargeter:
-# SpatialMP4 body_joints -> left/right TCP targets -> Galbot G1 arm joint_q
+# SpatialMP4 body_joints -> dual_arm_eepose -> Galbot G1 arm joint_q
 # -> side-by-side visualization (left: VR pose, right: retargeted pose).
 #
 # Usage:
@@ -23,7 +23,7 @@ INPUT_ONE_EURO_BETA="${INPUT_ONE_EURO_BETA:-0.03}"
 INPUT_ONE_EURO_D_CUTOFF="${INPUT_ONE_EURO_D_CUTOFF:-1.0}"
 WORKSPACE_SCALE="${WORKSPACE_SCALE:-1.0}"
 ARM_REACH_SCALE="${ARM_REACH_SCALE:-0.82}"
-TARGET_MODE="${TARGET_MODE:-frame_delta}"
+TARGET_MODE="${TARGET_MODE:-shoulder_delta}"
 ORIENTATION_MODE="${ORIENTATION_MODE:-neutral}"
 FPS="${FPS:-}"
 VIS_MAX_FRAMES="${VIS_MAX_FRAMES:-0}"

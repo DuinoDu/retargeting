@@ -11,10 +11,12 @@
 #include <utility>
 #include <vector>
 
+#include <Eigen/Geometry>
 #include <nlohmann/json.hpp>
 
 #include "box_qp.hpp"
 #include "lie.hpp"
+#include "utils/one_euro_filter.hpp"
 
 #ifndef RETARGETING_NO_MUJOCO
 #include <mujoco/mujoco.h>
@@ -42,6 +44,7 @@ void DualArmEePoseAlgorithm::end_frame(Eigen::VectorXd&) {}
 int DualArmEePoseAlgorithm::nq() const { return 0; }
 int DualArmEePoseAlgorithm::nv() const { return 0; }
 void DualArmEePoseAlgorithm::set_configuration(const Eigen::VectorXd&) {}
+SkeletonFrame DualArmEePoseAlgorithm::last_targets() const { return {}; }
 
 #else
 
@@ -59,20 +62,100 @@ Eigen::Vector4d normalized_quat(const Eigen::Vector4d& q) {
   return q / n;
 }
 
+Eigen::Vector4d qmul(const Eigen::Vector4d& a, const Eigen::Vector4d& b) {
+  return Eigen::Vector4d(
+      a[0]*b[0] - a[1]*b[1] - a[2]*b[2] - a[3]*b[3],
+      a[0]*b[1] + a[1]*b[0] + a[2]*b[3] - a[3]*b[2],
+      a[0]*b[2] - a[1]*b[3] + a[2]*b[0] + a[3]*b[1],
+      a[0]*b[3] + a[1]*b[2] - a[2]*b[1] + a[3]*b[0]);
+}
+
+Eigen::Vector4d qconj(const Eigen::Vector4d& q) {
+  return Eigen::Vector4d(q[0], -q[1], -q[2], -q[3]);
+}
+
+Eigen::Vector3d qrotate(const Eigen::Vector4d& q, const Eigen::Vector3d& v) {
+  Eigen::Vector4d p(0, v.x(), v.y(), v.z());
+  Eigen::Vector4d out = qmul(qmul(normalized_quat(q), p), qconj(normalized_quat(q)));
+  return Eigen::Vector3d(out[1], out[2], out[3]);
+}
+
+Eigen::Vector4d quat_from_rotation(const Eigen::Matrix3d& R) {
+  Eigen::Quaterniond q(R);
+  return normalized_quat(Eigen::Vector4d(q.w(), q.x(), q.y(), q.z()));
+}
+
+bool find_pose(const SkeletonFrame& frame, const std::vector<std::string>& names, Pose& out) {
+  for (const std::string& name : names) {
+    auto it = frame.find(name);
+    if (it == frame.end()) continue;
+    out = it->second;
+    return true;
+  }
+  return false;
+}
+
+std::string option_string(const RetargetConfig& config, const std::string& key,
+                          const std::string& fallback) {
+  auto it = config.options.find(key);
+  return it == config.options.end() ? fallback : it->second;
+}
+
+double option_double(const RetargetConfig& config, const std::string& key, double fallback) {
+  auto it = config.options.find(key);
+  if (it == config.options.end()) return fallback;
+  return std::stod(it->second);
+}
+
 }  // namespace
 
 struct DualArmEePoseAlgorithm::Impl {
+  enum class SourceMode {
+    RobotWorldAbsolute,
+    ShoulderDelta,
+    FrameDelta,
+    Se3Delta,
+    ShoulderAbsolute,
+  };
+
+  enum class OrientationMode {
+    Neutral,
+    RelativeWrist,
+  };
+
+  struct SourcePose {
+    Eigen::Vector3d pos = Eigen::Vector3d::Zero();
+    Eigen::Vector4d quat = Eigen::Vector4d(1, 0, 0, 0);
+  };
+
+  struct TargetState {
+    bool initialized = false;
+    Eigen::Vector3d prev_source_pos = Eigen::Vector3d::Zero();
+    Eigen::Vector4d prev_source_quat = Eigen::Vector4d(1, 0, 0, 0);
+    Eigen::Vector4d initial_source_quat = Eigen::Vector4d(1, 0, 0, 0);
+    Eigen::Matrix<double, 7, 1> robot_target = Eigen::Matrix<double, 7, 1>::Zero();
+  };
+
   struct Task {
     std::string name;
     std::vector<std::string> target_names;
+    std::vector<std::string> reference_names;
     std::string body_name;
+    std::string base_body_name;
     int body = -1;
+    int base_body = -1;
     std::vector<int> joint_qpos;
     std::vector<int> joint_dofs;
     Eigen::Matrix<double, 6, 1> cost = Eigen::Matrix<double, 6, 1>::Ones();
     double gain = 1.0;
     Eigen::Matrix<double, 7, 1> target = Eigen::Matrix<double, 7, 1>::Zero();
     bool has_target = false;
+    Eigen::Vector3d base_pos = Eigen::Vector3d::Zero();
+    Eigen::Vector3d straight_tcp_pos = Eigen::Vector3d::Zero();
+    Eigen::Vector3d neutral_tcp_pos = Eigen::Vector3d::Zero();
+    Eigen::Vector4d neutral_tcp_quat = Eigen::Vector4d(1, 0, 0, 0);
+    double reach = 0.0;
+    TargetState state;
   };
 
   struct CollisionPair {
@@ -127,11 +210,14 @@ struct DualArmEePoseAlgorithm::Impl {
     posture_weight_ = cfg.value("posture_weight", 0.02);
     max_iteration_update_ = cfg.value("max_iteration_update", 0.0);
     max_frame_update_ = cfg.value("max_frame_update", 0.0);
+    load_source_config(config, cfg);
 
     active_dof_.assign(m_->nv, false);
     load_tasks(cfg);
+    capture_task_robot_references(/*neutral=*/false);
     load_posture_reference(cfg);
     set_qpos(qpos_);
+    capture_task_robot_references(/*neutral=*/true);
     load_collision(cfg);
 
     locked_qpos_count_ = spec.locked_qpos_prefix;
@@ -198,6 +284,8 @@ struct DualArmEePoseAlgorithm::Impl {
     set_qpos(qpos);
   }
 
+  SkeletonFrame last_targets() const { return last_targets_; }
+
  private:
   int body_id(const std::string& name) const {
     int id = mj_name2id(m_, mjOBJ_BODY, name.c_str());
@@ -209,6 +297,62 @@ struct DualArmEePoseAlgorithm::Impl {
     int id = mj_name2id(m_, mjOBJ_GEOM, name.c_str());
     if (id < 0) throw std::runtime_error("unknown geom in dual_arm_eepose config: " + name);
     return id;
+  }
+
+  static SourceMode parse_source_mode(const std::string& mode) {
+    if (mode == "robot_world_absolute" || mode == "robot_world" || mode == "absolute")
+      return SourceMode::RobotWorldAbsolute;
+    if (mode == "shoulder_delta") return SourceMode::ShoulderDelta;
+    if (mode == "frame_delta") return SourceMode::FrameDelta;
+    if (mode == "se3_delta") return SourceMode::Se3Delta;
+    if (mode == "shoulder_absolute") return SourceMode::ShoulderAbsolute;
+    throw std::runtime_error("unknown dual_arm_eepose source mode: " + mode);
+  }
+
+  static OrientationMode parse_orientation_mode(const std::string& mode) {
+    if (mode == "neutral") return OrientationMode::Neutral;
+    if (mode == "relative_wrist") return OrientationMode::RelativeWrist;
+    throw std::runtime_error("unknown dual_arm_eepose orientation mode: " + mode);
+  }
+
+  void load_source_config(const RetargetConfig& config, const json& cfg) {
+    const json source = cfg.contains("source") && cfg["source"].is_object()
+        ? cfg["source"]
+        : json::object();
+    const json filter = source.contains("filter") && source["filter"].is_object()
+        ? source["filter"]
+        : json::object();
+
+    const std::string mode = option_string(
+        config, "source_mode",
+        source.value("mode", cfg.value("source_mode", "robot_world_absolute")));
+    const std::string orientation = option_string(
+        config, "orientation_mode",
+        source.value("orientation_mode", cfg.value("orientation_mode", "neutral")));
+    source_mode_ = parse_source_mode(mode);
+    orientation_mode_ = parse_orientation_mode(orientation);
+    workspace_scale_ = option_double(
+        config, "workspace_scale",
+        source.value("workspace_scale", cfg.value("workspace_scale", 1.0)));
+    arm_reach_scale_ = option_double(
+        config, "arm_reach_scale",
+        source.value("arm_reach_scale", cfg.value("arm_reach_scale", 0.82)));
+    source_fps_ = option_double(
+        config, "source_fps",
+        source.value("fps", cfg.value("source_fps", 30.0)));
+    if (!(source_fps_ > 0.0) || !std::isfinite(source_fps_)) source_fps_ = 30.0;
+
+    const double min_cutoff = option_double(
+        config, "source_filter_min_cutoff",
+        filter.value("min_cutoff", cfg.value("source_filter_min_cutoff", 0.0)));
+    const double beta = option_double(
+        config, "source_filter_beta",
+        filter.value("beta", cfg.value("source_filter_beta", 0.0)));
+    const double d_cutoff = option_double(
+        config, "source_filter_d_cutoff",
+        filter.value("d_cutoff", cfg.value("source_filter_d_cutoff", 1.0)));
+    source_filter_ = utils::OneEuroPoseFilter(min_cutoff, beta, d_cutoff);
+    source_time_s_ = 0.0;
   }
 
   void build_qpos_to_dof_map() {
@@ -237,10 +381,29 @@ struct DualArmEePoseAlgorithm::Impl {
       task.name = entry.value("name", "");
       task.body_name = entry.at("body").get<std::string>();
       task.body = body_id(task.body_name);
+      if (entry.contains("base_body")) {
+        task.base_body_name = entry.at("base_body").get<std::string>();
+      } else if (task.name.find("right") != std::string::npos) {
+        task.base_body_name = "right_arm_base_link";
+      } else {
+        task.base_body_name = "left_arm_base_link";
+      }
+      task.base_body = body_id(task.base_body_name);
       task.target_names.push_back(entry.at("target").get<std::string>());
       if (entry.contains("target_aliases")) {
         auto aliases = string_array(entry["target_aliases"]);
         task.target_names.insert(task.target_names.end(), aliases.begin(), aliases.end());
+      }
+      if (entry.contains("reference_target")) {
+        task.reference_names.push_back(entry.at("reference_target").get<std::string>());
+      } else if (task.name.find("right") != std::string::npos) {
+        task.reference_names.push_back("RightShoulder");
+      } else {
+        task.reference_names.push_back("LeftShoulder");
+      }
+      if (entry.contains("reference_aliases")) {
+        auto aliases = string_array(entry["reference_aliases"]);
+        task.reference_names.insert(task.reference_names.end(), aliases.begin(), aliases.end());
       }
       const double pos_w = entry.value("position_weight", default_pos_weight);
       const double rot_w = entry.value("rotation_weight", default_rot_weight);
@@ -291,10 +454,32 @@ struct DualArmEePoseAlgorithm::Impl {
   }
 
   void load_posture_reference(const json& cfg) {
-    if (cfg.contains("posture_reference"))
+    if (cfg.contains("posture_reference")) {
+      has_neutral_reference_ = true;
       apply_joint_positions(cfg["posture_reference"], true, true);
-    if (cfg.contains("initial_joint_positions"))
+    }
+    if (cfg.contains("initial_joint_positions")) {
+      has_neutral_reference_ = true;
       apply_joint_positions(cfg["initial_joint_positions"], false, true);
+    }
+  }
+
+  void capture_task_robot_references(bool neutral) {
+    for (auto& task : tasks_) {
+      Eigen::Matrix<double, 7, 1> tcp;
+      frame_pose(task.body, tcp);
+      if (neutral) {
+        task.neutral_tcp_quat = tcp.head<4>();
+        task.neutral_tcp_pos = tcp.tail<3>();
+        continue;
+      }
+
+      Eigen::Matrix<double, 7, 1> base;
+      frame_pose(task.base_body, base);
+      task.base_pos = base.tail<3>();
+      task.straight_tcp_pos = tcp.tail<3>();
+      task.reach = (task.straight_tcp_pos - task.base_pos).norm();
+    }
   }
 
   std::vector<int> resolve_geom_group(const json& group) const {
@@ -349,18 +534,203 @@ struct DualArmEePoseAlgorithm::Impl {
     }
   }
 
-  void update_targets(const SkeletonFrame& frame) {
+  void set_task_target(Task& task, const Eigen::Vector3d& pos,
+                       const Eigen::Vector4d& quat) {
+    const Eigen::Vector4d q = normalized_quat(quat);
+    task.target << q[0], q[1], q[2], q[3], pos[0], pos[1], pos[2];
+    task.has_target = true;
+
+    if (!task.target_names.empty()) {
+      Pose out;
+      out.pos = pos;
+      out.quat = q;
+      last_targets_[task.target_names.front()] = out;
+    }
+  }
+
+  Eigen::Vector3d clamp_reach(const Task& task, const Eigen::Vector3d& target) const {
+    Eigen::Vector3d v = target - task.base_pos;
+    double n = v.norm();
+    const double max_reach = task.reach * 0.995;
+    if (!(max_reach > 0.0) || !(n > max_reach)) return target;
+    return task.base_pos + v * (max_reach / n);
+  }
+
+  bool find_side_reference(const SkeletonFrame& frame, const char* side, Pose& out) const {
+    for (const auto& task : tasks_) {
+      if (task.name.find(side) == std::string::npos) continue;
+      if (find_pose(frame, task.reference_names, out)) return true;
+    }
+    return false;
+  }
+
+  bool make_shoulder_frame(const SkeletonFrame& frame, Eigen::Matrix3d& R_world_body,
+                           Eigen::Vector4d& q_world_body) const {
+    Pose left_shoulder;
+    Pose right_shoulder;
+    if (!find_side_reference(frame, "left", left_shoulder) ||
+        !find_side_reference(frame, "right", right_shoulder)) {
+      return false;
+    }
+
+    Eigen::Vector3d y_axis = left_shoulder.pos - right_shoulder.pos;
+    y_axis.z() = 0.0;
+    if (y_axis.norm() < 1e-5) return false;
+    y_axis.normalize();
+
+    const Eigen::Vector3d z_axis = Eigen::Vector3d::UnitZ();
+    Eigen::Vector3d x_axis = y_axis.cross(z_axis);
+    if (x_axis.norm() < 1e-5) return false;
+    x_axis.normalize();
+    y_axis = z_axis.cross(x_axis).normalized();
+
+    R_world_body.col(0) = x_axis;
+    R_world_body.col(1) = y_axis;
+    R_world_body.col(2) = z_axis;
+    q_world_body = quat_from_rotation(R_world_body);
+    return true;
+  }
+
+  SourcePose to_body_relative_pose(const Pose& origin, const Pose& child,
+                                   const Eigen::Matrix3d& R_world_body,
+                                   const Eigen::Vector4d& q_world_body) const {
+    SourcePose out;
+    out.pos = R_world_body.transpose() * (child.pos - origin.pos);
+    out.quat = normalized_quat(qmul(qconj(q_world_body), normalized_quat(child.quat)));
+    return out;
+  }
+
+  void initialize_source_target(Task& task, const SourcePose& source) {
+    TargetState& state = task.state;
+    state.initialized = true;
+    state.prev_source_pos = source.pos;
+    state.prev_source_quat = source.quat;
+    state.initial_source_quat = source.quat;
+
+    Eigen::Vector3d pos;
+    if (source_mode_ == SourceMode::ShoulderAbsolute) {
+      pos = task.base_pos + workspace_scale_ * source.pos;
+    } else if (has_neutral_reference_) {
+      pos = task.neutral_tcp_pos;
+    } else {
+      pos = task.base_pos + arm_reach_scale_ * (task.straight_tcp_pos - task.base_pos);
+    }
+    pos = clamp_reach(task, pos);
+
+    state.robot_target << task.neutral_tcp_quat[0], task.neutral_tcp_quat[1],
+        task.neutral_tcp_quat[2], task.neutral_tcp_quat[3], pos.x(), pos.y(), pos.z();
+    set_task_target(task, pos, task.neutral_tcp_quat);
+  }
+
+  void update_source_target(Task& task, const SourcePose& source) {
+    TargetState& state = task.state;
+    if (!state.initialized) {
+      initialize_source_target(task, source);
+      return;
+    }
+
+    Eigen::Vector3d pos = state.robot_target.tail<3>();
+    Eigen::Vector4d quat = state.robot_target.head<4>();
+    if (source_mode_ == SourceMode::ShoulderAbsolute) {
+      pos = task.base_pos + workspace_scale_ * source.pos;
+      if (orientation_mode_ == OrientationMode::RelativeWrist) {
+        quat = normalized_quat(qmul(
+            task.neutral_tcp_quat, qmul(qconj(state.initial_source_quat), source.quat)));
+      } else {
+        quat = task.neutral_tcp_quat;
+      }
+    } else {
+      const Eigen::Vector4d delta_quat =
+          normalized_quat(qmul(qconj(state.prev_source_quat), source.quat));
+      Eigen::Vector3d delta_pos = source.pos - state.prev_source_pos;
+      if (source_mode_ == SourceMode::Se3Delta) {
+        delta_pos = qrotate(qconj(state.prev_source_quat), delta_pos);
+        pos += qrotate(quat, workspace_scale_ * delta_pos);
+      } else {
+        pos += workspace_scale_ * delta_pos;
+      }
+
+      if (orientation_mode_ == OrientationMode::RelativeWrist) {
+        quat = normalized_quat(qmul(quat, delta_quat));
+      } else {
+        quat = task.neutral_tcp_quat;
+      }
+    }
+
+    pos = clamp_reach(task, pos);
+    state.robot_target << quat[0], quat[1], quat[2], quat[3], pos.x(), pos.y(), pos.z();
+    state.prev_source_pos = source.pos;
+    state.prev_source_quat = source.quat;
+    set_task_target(task, pos, quat);
+  }
+
+  void update_absolute_targets(const SkeletonFrame& frame) {
     for (auto& task : tasks_) {
       task.has_target = false;
-      for (const std::string& name : task.target_names) {
-        auto it = frame.find(name);
-        if (it == frame.end()) continue;
-        const Pose& pose = it->second;
-        Eigen::Vector4d q = normalized_quat(pose.quat);
-        task.target << q[0], q[1], q[2], q[3], pose.pos[0], pose.pos[1], pose.pos[2];
-        task.has_target = true;
-        break;
+      Pose pose;
+      if (find_pose(frame, task.target_names, pose)) {
+        set_task_target(task, pose.pos, pose.quat);
       }
+    }
+  }
+
+  void update_source_targets(const SkeletonFrame& frame) {
+    Eigen::Matrix3d R_world_body;
+    Eigen::Vector4d q_world_body;
+    const bool need_shoulder_frame = source_mode_ != SourceMode::FrameDelta;
+    if (need_shoulder_frame &&
+        !make_shoulder_frame(frame, R_world_body, q_world_body)) {
+      for (auto& task : tasks_) task.has_target = false;
+      return;
+    }
+
+    std::vector<utils::NamedPose> filter_inputs;
+    std::vector<size_t> filter_task_indices;
+    filter_inputs.reserve(tasks_.size());
+    filter_task_indices.reserve(tasks_.size());
+    for (size_t i = 0; i < tasks_.size(); ++i) {
+      Task& task = tasks_[i];
+      task.has_target = false;
+
+      Pose target_pose;
+      if (!find_pose(frame, task.target_names, target_pose)) continue;
+
+      SourcePose source;
+      if (source_mode_ == SourceMode::FrameDelta) {
+        source.pos = target_pose.pos;
+        source.quat = normalized_quat(target_pose.quat);
+      } else {
+        Pose reference_pose;
+        if (!find_pose(frame, task.reference_names, reference_pose)) continue;
+        source = to_body_relative_pose(reference_pose, target_pose, R_world_body, q_world_body);
+      }
+
+      utils::NamedPose named;
+      named.name = task.target_names.empty() ? task.name : task.target_names.front();
+      named.pos = source.pos;
+      named.quat = source.quat;
+      filter_inputs.push_back(std::move(named));
+      filter_task_indices.push_back(i);
+    }
+
+    if (filter_inputs.empty()) return;
+    source_filter_.filter(source_time_s_, filter_inputs);
+    source_time_s_ += 1.0 / source_fps_;
+
+    for (size_t i = 0; i < filter_inputs.size(); ++i) {
+      SourcePose source;
+      source.pos = filter_inputs[i].pos;
+      source.quat = normalized_quat(filter_inputs[i].quat);
+      update_source_target(tasks_[filter_task_indices[i]], source);
+    }
+  }
+
+  void update_targets(const SkeletonFrame& frame) {
+    last_targets_.clear();
+    if (source_mode_ == SourceMode::RobotWorldAbsolute) {
+      update_absolute_targets(frame);
+    } else {
+      update_source_targets(frame);
     }
   }
 
@@ -605,6 +975,16 @@ struct DualArmEePoseAlgorithm::Impl {
   std::vector<bool> active_dof_;
   std::vector<int> qpos_to_dof_;
 
+  SourceMode source_mode_ = SourceMode::RobotWorldAbsolute;
+  OrientationMode orientation_mode_ = OrientationMode::Neutral;
+  double workspace_scale_ = 1.0;
+  double arm_reach_scale_ = 0.82;
+  double source_fps_ = 30.0;
+  double source_time_s_ = 0.0;
+  bool has_neutral_reference_ = false;
+  utils::OneEuroPoseFilter source_filter_{0.0, 0.0, 1.0};
+  SkeletonFrame last_targets_;
+
   int locked_qpos_count_ = 0;
   Eigen::VectorXd locked_qpos_;
   std::vector<int> clamp_qpos_indices_;
@@ -643,6 +1023,10 @@ int DualArmEePoseAlgorithm::nv() const { return impl_->nv(); }
 
 void DualArmEePoseAlgorithm::set_configuration(const Eigen::VectorXd& qpos) {
   impl_->set_configuration(qpos);
+}
+
+SkeletonFrame DualArmEePoseAlgorithm::last_targets() const {
+  return impl_->last_targets();
 }
 
 #endif  // RETARGETING_NO_MUJOCO
