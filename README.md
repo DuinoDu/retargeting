@@ -6,7 +6,7 @@ so that the teleoperation *use case* and the underlying *algorithm* evolve
 independently, and so it can be driven from a Godot GDExtension that feeds the
 headset's body/hand poses in each frame.
 
-Current release: `0.1.1`.
+Current release: `0.1.2`.
 
 The first algorithm is a C++ port of **GMR** (General Motion Retargeting),
 carried over from the validated standalone port. Its output is **byte-for-byte
@@ -139,21 +139,46 @@ Override the test robot with `ROBOT_XML=/path/to/galbot_g1.xml` if needed.
 The main outputs are `dual_arm_solution.jsonl` (14 arm joint commands),
 `eepose_targets.jsonl` (robot-world TCP targets), and
 `vr_pose_vs_retargeted.mp4` (left: aligned VR pose; right: retargeted Galbot
-skeleton).
+skeleton). The VR panel also renders the exported palm and finger keypoints
+when the SpatialMP4 body track contains the Godot/Quest hand joints.
 Set `VIS_MAX_FRAMES=120` for a short smoke-test render, or leave it unset to
 render the full capture.
 
 The Galbot test path keeps the joint output low-pass disabled by default for
 delta-pose control: `MAX_JOINT_VEL_DEG_S=240`, `JOINT_LOWPASS_CUTOFF=0`,
-`INPUT_ONE_EURO_MIN_CUTOFF=0.6`, and `INPUT_ONE_EURO_BETA=0.03`. The OneEuro
-filter is applied after converting the capture to the selected EE source pose,
-so shoulder/body motion is not filtered into arm motion. The default
-`ORIENTATION_MODE=neutral` applies the translational part of the EE delta and
-keeps a stable Galbot TCP orientation from the configured neutral arm posture.
-Use `ORIENTATION_MODE=relative_wrist` only when the input capture provides a
-reliable wrist/tool orientation; the bundled SpatialMP4 body track has wrist
-joints but no palm or hand-tip direction, so full wrist quaternion delta
-tracking can create unreachable 6D targets.
+and `INPUT_ONE_EURO_MIN_CUTOFF=0`. The OneEuro filter can still be enabled
+with `INPUT_ONE_EURO_MIN_CUTOFF>0`; when enabled it is applied after converting
+the capture to the selected EE source pose, so shoulder/body motion is not
+filtered into arm motion. The default
+`ORIENTATION_MODE=relative_wrist_roll` tracks only the wrist roll component
+around the VR forearm axis and applies that roll around the configured Galbot
+TCP/gripper axis. It does not send the full wrist quaternion to IK. Use
+`ORIENTATION_MODE=relative_wrist` only when the input capture provides a
+reliable wrist/tool orientation; full wrist quaternion delta tracking can
+create unreachable 6D targets when the capture orientation is noisy or not
+calibrated to the robot tool frame. Use `ORIENTATION_MODE=neutral` to ignore
+wrist orientation and keep the configured neutral Galbot TCP orientation.
+
+Each arm task can also enable an elbow direction soft constraint:
+`elbow_constraint.enabled=true` requires a VR elbow source key such as
+`LeftArmLower` and a robot elbow body such as `left_arm_link4`. The constraint
+aligns only the shoulder-to-elbow direction, not the segment length, so it is
+robust to human/robot upper-arm length differences.
+
+The Galbot G1 config also masks the EE rotation task to the wrist joints:
+`rotation_joint_names` is set to arm joints 5/6/7 and
+`rotation_leak_weight=0`, so EE position can still use the whole arm while EE
+orientation is solved by the wrist instead of pulling the shoulder/upper arm.
+For roll-only wrist tracking, `rotation_roll_axis` specifies the Galbot local
+TCP/gripper axis used by `relative_wrist_roll`, and `rotation_roll_scale` can
+be set to `-1` if a robot model needs the opposite roll sign.
+
+`wrist_forearm_constraint.enabled=true` is available as an experimental
+naturalness constraint for grasping poses: it compares the VR forearm direction
+with a configured VR hand axis, then discourages solutions where the robot TCP
+axis bends much farther away from the robot forearm. It is not enabled in the
+default Galbot G1 config because even weak wrist-axis constraints can pull the
+shoulder and upper-arm joints away from the elbow/EE tasks.
 
 ## Build & run on device (Android / NDK)
 

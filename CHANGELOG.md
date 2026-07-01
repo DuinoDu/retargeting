@@ -2,6 +2,26 @@
 
 All notable changes to this project are tracked here.
 
+## [0.1.2] - 2026-07-01
+
+### Added
+- Added Galbot dual-arm `relative_wrist_roll` orientation retargeting, which
+  extracts only the wrist roll around the VR forearm axis and applies it around
+  the configured robot TCP/gripper axis.
+- Added per-task `rotation_joint_names`, `rotation_leak_weight`,
+  `rotation_roll_axis`, and `rotation_roll_scale` controls so Galbot EE
+  rotation can be solved by wrist joints 5/6/7 without pulling the upper arm.
+- Added elbow direction soft constraints for dual-arm EE pose retargeting.
+- Added SpatialMP4 hand keypoint extraction and Galbot skeleton/gripper
+  visualization for the dual-arm validation video.
+
+### Changed
+- The Galbot dual-arm test path now defaults to shoulder-relative delta pose
+  retargeting with roll-only wrist orientation and input/joint low-pass filters
+  disabled.
+- The Galbot dual-arm config starts from a VR-like initial pose and keeps
+  collision constraints enabled for offline validation.
+
 ## [0.1.1] - 2026-07-01
 
 ### Added
