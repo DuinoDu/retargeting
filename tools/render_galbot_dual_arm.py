@@ -32,6 +32,61 @@ JOINT_ORDER = [
     "RightWrist",
 ]
 
+HAND_JOINT_ORDER = [
+    "LeftHand",
+    "LeftPalm",
+    "LeftThumbMetacarpal",
+    "LeftThumbProximal",
+    "LeftThumbDistal",
+    "LeftThumbTip",
+    "LeftIndexMetacarpal",
+    "LeftIndexProximal",
+    "LeftIndexIntermediate",
+    "LeftIndexDistal",
+    "LeftIndexTip",
+    "LeftMiddleMetacarpal",
+    "LeftMiddleProximal",
+    "LeftMiddleIntermediate",
+    "LeftMiddleDistal",
+    "LeftMiddleTip",
+    "LeftRingMetacarpal",
+    "LeftRingProximal",
+    "LeftRingIntermediate",
+    "LeftRingDistal",
+    "LeftRingTip",
+    "LeftPinkyMetacarpal",
+    "LeftPinkyProximal",
+    "LeftPinkyIntermediate",
+    "LeftPinkyDistal",
+    "LeftPinkyTip",
+    "RightHand",
+    "RightPalm",
+    "RightThumbMetacarpal",
+    "RightThumbProximal",
+    "RightThumbDistal",
+    "RightThumbTip",
+    "RightIndexMetacarpal",
+    "RightIndexProximal",
+    "RightIndexIntermediate",
+    "RightIndexDistal",
+    "RightIndexTip",
+    "RightMiddleMetacarpal",
+    "RightMiddleProximal",
+    "RightMiddleIntermediate",
+    "RightMiddleDistal",
+    "RightMiddleTip",
+    "RightRingMetacarpal",
+    "RightRingProximal",
+    "RightRingIntermediate",
+    "RightRingDistal",
+    "RightRingTip",
+    "RightPinkyMetacarpal",
+    "RightPinkyProximal",
+    "RightPinkyIntermediate",
+    "RightPinkyDistal",
+    "RightPinkyTip",
+]
+
 EDGES = [
     ("Hips", "Chest"),
     ("Chest", "Neck"),
@@ -45,6 +100,64 @@ EDGES = [
     ("RightArmUpper", "RightArmLower"),
     ("RightArmLower", "RightWrist"),
 ]
+
+HAND_EDGES = [
+    ("LeftWrist", "LeftHand"),
+    ("LeftHand", "LeftPalm"),
+    ("LeftPalm", "LeftThumbMetacarpal"),
+    ("LeftThumbMetacarpal", "LeftThumbProximal"),
+    ("LeftThumbProximal", "LeftThumbDistal"),
+    ("LeftThumbDistal", "LeftThumbTip"),
+    ("LeftPalm", "LeftIndexMetacarpal"),
+    ("LeftIndexMetacarpal", "LeftIndexProximal"),
+    ("LeftIndexProximal", "LeftIndexIntermediate"),
+    ("LeftIndexIntermediate", "LeftIndexDistal"),
+    ("LeftIndexDistal", "LeftIndexTip"),
+    ("LeftPalm", "LeftMiddleMetacarpal"),
+    ("LeftMiddleMetacarpal", "LeftMiddleProximal"),
+    ("LeftMiddleProximal", "LeftMiddleIntermediate"),
+    ("LeftMiddleIntermediate", "LeftMiddleDistal"),
+    ("LeftMiddleDistal", "LeftMiddleTip"),
+    ("LeftPalm", "LeftRingMetacarpal"),
+    ("LeftRingMetacarpal", "LeftRingProximal"),
+    ("LeftRingProximal", "LeftRingIntermediate"),
+    ("LeftRingIntermediate", "LeftRingDistal"),
+    ("LeftRingDistal", "LeftRingTip"),
+    ("LeftPalm", "LeftPinkyMetacarpal"),
+    ("LeftPinkyMetacarpal", "LeftPinkyProximal"),
+    ("LeftPinkyProximal", "LeftPinkyIntermediate"),
+    ("LeftPinkyIntermediate", "LeftPinkyDistal"),
+    ("LeftPinkyDistal", "LeftPinkyTip"),
+    ("RightWrist", "RightHand"),
+    ("RightHand", "RightPalm"),
+    ("RightPalm", "RightThumbMetacarpal"),
+    ("RightThumbMetacarpal", "RightThumbProximal"),
+    ("RightThumbProximal", "RightThumbDistal"),
+    ("RightThumbDistal", "RightThumbTip"),
+    ("RightPalm", "RightIndexMetacarpal"),
+    ("RightIndexMetacarpal", "RightIndexProximal"),
+    ("RightIndexProximal", "RightIndexIntermediate"),
+    ("RightIndexIntermediate", "RightIndexDistal"),
+    ("RightIndexDistal", "RightIndexTip"),
+    ("RightPalm", "RightMiddleMetacarpal"),
+    ("RightMiddleMetacarpal", "RightMiddleProximal"),
+    ("RightMiddleProximal", "RightMiddleIntermediate"),
+    ("RightMiddleIntermediate", "RightMiddleDistal"),
+    ("RightMiddleDistal", "RightMiddleTip"),
+    ("RightPalm", "RightRingMetacarpal"),
+    ("RightRingMetacarpal", "RightRingProximal"),
+    ("RightRingProximal", "RightRingIntermediate"),
+    ("RightRingIntermediate", "RightRingDistal"),
+    ("RightRingDistal", "RightRingTip"),
+    ("RightPalm", "RightPinkyMetacarpal"),
+    ("RightPinkyMetacarpal", "RightPinkyProximal"),
+    ("RightPinkyProximal", "RightPinkyIntermediate"),
+    ("RightPinkyIntermediate", "RightPinkyDistal"),
+    ("RightPinkyDistal", "RightPinkyTip"),
+]
+
+VR_JOINT_ORDER = JOINT_ORDER + HAND_JOINT_ORDER
+VR_EDGES = EDGES + HAND_EDGES
 
 ROBOT_BODY_ORDER = [
     "torso_base_link",
@@ -61,6 +174,14 @@ ROBOT_BODY_ORDER = [
     "left_arm_link6",
     "left_arm_link7",
     "left_arm_end_effector_mount_link",
+    "left_gripper_flange_link",
+    "left_gripper_base_link",
+    "left_gripper_r_knuckle_link",
+    "left_gripper_r_inner_knuckle_link",
+    "left_gripper_r_finger_link",
+    "left_gripper_l_knuckle_link",
+    "left_gripper_l_inner_knuckle_link",
+    "left_gripper_l_finger_link",
     "left_gripper_tcp_link",
     "torso_right_arm_mount_link",
     "right_arm_base_link",
@@ -72,6 +193,14 @@ ROBOT_BODY_ORDER = [
     "right_arm_link6",
     "right_arm_link7",
     "right_arm_end_effector_mount_link",
+    "right_gripper_flange_link",
+    "right_gripper_base_link",
+    "right_gripper_r_knuckle_link",
+    "right_gripper_r_inner_knuckle_link",
+    "right_gripper_r_finger_link",
+    "right_gripper_l_knuckle_link",
+    "right_gripper_l_inner_knuckle_link",
+    "right_gripper_l_finger_link",
     "right_gripper_tcp_link",
 ]
 
@@ -89,7 +218,15 @@ ROBOT_EDGES = [
     ("left_arm_link5", "left_arm_link6"),
     ("left_arm_link6", "left_arm_link7"),
     ("left_arm_link7", "left_arm_end_effector_mount_link"),
-    ("left_arm_end_effector_mount_link", "left_gripper_tcp_link"),
+    ("left_arm_end_effector_mount_link", "left_gripper_flange_link"),
+    ("left_gripper_flange_link", "left_gripper_base_link"),
+    ("left_gripper_base_link", "left_gripper_r_knuckle_link"),
+    ("left_gripper_base_link", "left_gripper_r_inner_knuckle_link"),
+    ("left_gripper_r_inner_knuckle_link", "left_gripper_r_finger_link"),
+    ("left_gripper_base_link", "left_gripper_l_knuckle_link"),
+    ("left_gripper_base_link", "left_gripper_l_inner_knuckle_link"),
+    ("left_gripper_l_inner_knuckle_link", "left_gripper_l_finger_link"),
+    ("left_gripper_base_link", "left_gripper_tcp_link"),
     ("torso_base_link", "torso_right_arm_mount_link"),
     ("torso_right_arm_mount_link", "right_arm_base_link"),
     ("right_arm_base_link", "right_arm_link1"),
@@ -100,7 +237,15 @@ ROBOT_EDGES = [
     ("right_arm_link5", "right_arm_link6"),
     ("right_arm_link6", "right_arm_link7"),
     ("right_arm_link7", "right_arm_end_effector_mount_link"),
-    ("right_arm_end_effector_mount_link", "right_gripper_tcp_link"),
+    ("right_arm_end_effector_mount_link", "right_gripper_flange_link"),
+    ("right_gripper_flange_link", "right_gripper_base_link"),
+    ("right_gripper_base_link", "right_gripper_r_knuckle_link"),
+    ("right_gripper_base_link", "right_gripper_r_inner_knuckle_link"),
+    ("right_gripper_r_inner_knuckle_link", "right_gripper_r_finger_link"),
+    ("right_gripper_base_link", "right_gripper_l_knuckle_link"),
+    ("right_gripper_base_link", "right_gripper_l_inner_knuckle_link"),
+    ("right_gripper_l_inner_knuckle_link", "right_gripper_l_finger_link"),
+    ("right_gripper_base_link", "right_gripper_tcp_link"),
 ]
 
 
@@ -260,6 +405,18 @@ def edge_color(a: str, b: str) -> Tuple[int, int, int]:
     return (210, 214, 220)
 
 
+def is_hand_keypoint(name: str) -> bool:
+    return (
+        "Thumb" in name
+        or "Index" in name
+        or "Middle" in name
+        or "Ring" in name
+        or "Pinky" in name
+        or name.endswith("Palm")
+        or name.endswith("Hand")
+    )
+
+
 def render_skeleton_panel(
     frame: Dict[str, np.ndarray],
     width: int,
@@ -297,7 +454,8 @@ def render_skeleton_panel(
     for name in names:
         if name not in frame:
             continue
-        draw_circle(img, project(frame[name]), 5, side_color(name))
+        draw_circle(img, project(frame[name]), 3 if is_hand_keypoint(name) else 5,
+                    side_color(name))
     return img
 
 
@@ -308,7 +466,7 @@ def render_vr_panel(
     lo: np.ndarray,
     hi: np.ndarray,
 ) -> np.ndarray:
-    return render_skeleton_panel(frame, width, height, lo, hi, JOINT_ORDER, EDGES)
+    return render_skeleton_panel(frame, width, height, lo, hi, VR_JOINT_ORDER, VR_EDGES)
 
 
 def render_robot_panel(
@@ -361,7 +519,7 @@ def iter_frames(args: argparse.Namespace) -> Iterable[np.ndarray]:
         sys.exit(f"no frames in {args.solution_jsonl}")
 
     body = aligned_body_frames(raw_body, args.pelvis_height)
-    lo, hi = fit_yz_bounds(body, JOINT_ORDER)
+    lo, hi = fit_yz_bounds(body, VR_JOINT_ORDER)
     n = min(len(body), len(qs))
     if args.max_frames > 0:
         n = min(n, args.max_frames)

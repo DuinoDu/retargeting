@@ -41,6 +41,61 @@ GODOT_QUEST_UPPER_JOINTS: Dict[str, Sequence[int]] = {
     "RightWrist": (51, 49, 80),
 }
 
+GODOT_QUEST_HAND_JOINTS: Dict[str, Sequence[int]] = {
+    "LeftHand": (22,),
+    "LeftPalm": (23,),
+    "LeftThumbMetacarpal": (25,),
+    "LeftThumbProximal": (26,),
+    "LeftThumbDistal": (27,),
+    "LeftThumbTip": (28,),
+    "LeftIndexMetacarpal": (29,),
+    "LeftIndexProximal": (30,),
+    "LeftIndexIntermediate": (31,),
+    "LeftIndexDistal": (32,),
+    "LeftIndexTip": (33,),
+    "LeftMiddleMetacarpal": (34,),
+    "LeftMiddleProximal": (35,),
+    "LeftMiddleIntermediate": (36,),
+    "LeftMiddleDistal": (37,),
+    "LeftMiddleTip": (38,),
+    "LeftRingMetacarpal": (39,),
+    "LeftRingProximal": (40,),
+    "LeftRingIntermediate": (41,),
+    "LeftRingDistal": (42,),
+    "LeftRingTip": (43,),
+    "LeftPinkyMetacarpal": (44,),
+    "LeftPinkyProximal": (45,),
+    "LeftPinkyIntermediate": (46,),
+    "LeftPinkyDistal": (47,),
+    "LeftPinkyTip": (48,),
+    "RightHand": (49,),
+    "RightPalm": (50,),
+    "RightThumbMetacarpal": (52,),
+    "RightThumbProximal": (53,),
+    "RightThumbDistal": (54,),
+    "RightThumbTip": (55,),
+    "RightIndexMetacarpal": (56,),
+    "RightIndexProximal": (57,),
+    "RightIndexIntermediate": (58,),
+    "RightIndexDistal": (59,),
+    "RightIndexTip": (60,),
+    "RightMiddleMetacarpal": (61,),
+    "RightMiddleProximal": (62,),
+    "RightMiddleIntermediate": (63,),
+    "RightMiddleDistal": (64,),
+    "RightMiddleTip": (65,),
+    "RightRingMetacarpal": (66,),
+    "RightRingProximal": (67,),
+    "RightRingIntermediate": (68,),
+    "RightRingDistal": (69,),
+    "RightRingTip": (70,),
+    "RightPinkyMetacarpal": (71,),
+    "RightPinkyProximal": (72,),
+    "RightPinkyIntermediate": (73,),
+    "RightPinkyDistal": (74,),
+    "RightPinkyTip": (75,),
+}
+
 
 @dataclass
 class BodyJoint:
@@ -207,7 +262,8 @@ def read_body_frames(mp4_path: Path, track_id: str) -> tuple[List[BodyFrame], st
 def mapped_upper_body_joints(frame: BodyFrame) -> dict:
     by_id = {joint.joint_id: joint for joint in frame.joints}
     out = {}
-    for name, candidates in GODOT_QUEST_UPPER_JOINTS.items():
+    mapped_joints = {**GODOT_QUEST_UPPER_JOINTS, **GODOT_QUEST_HAND_JOINTS}
+    for name, candidates in mapped_joints.items():
         joint = next((by_id[joint_id] for joint_id in candidates if joint_id in by_id), None)
         if joint is None:
             continue
@@ -236,7 +292,7 @@ def iter_output_records(frames: Iterable[BodyFrame]) -> Iterator[dict]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Extract Quest/Godot upper-body joints from a SpatialMP4 body_joints track.",
+        description="Extract Quest/Godot body and hand joints from a SpatialMP4 body_joints track.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("mp4", type=Path)
@@ -258,7 +314,7 @@ def main() -> None:
             f.write(json.dumps(record, separators=(",", ":")) + "\n")
             count += 1
     print(
-        f"Extracted {count} mapped upper-body frames from {args.mp4} "
+        f"Extracted {count} mapped body/hand frames from {args.mp4} "
         f"using {reader_name}; wrote {args.output}"
     )
 

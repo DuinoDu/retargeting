@@ -9,12 +9,12 @@
   "posture_weight": 0.12,
   "source": {
     "mode": "shoulder_delta",
-    "orientation_mode": "neutral",
+    "orientation_mode": "relative_wrist_roll",
     "workspace_scale": 1.0,
     "arm_reach_scale": 0.82,
     "fps": 30.0,
     "filter": {
-      "min_cutoff": 0.6,
+      "min_cutoff": 0.0,
       "beta": 0.03,
       "d_cutoff": 1.0
     }
@@ -43,6 +43,13 @@
       "reference_target": "LeftShoulder",
       "base_body": "left_arm_base_link",
       "body": "left_gripper_tcp_link",
+      "elbow_constraint": {
+        "enabled": true,
+        "source_target": "LeftArmLower",
+        "robot_body": "left_arm_link4",
+        "weight": 8.0,
+        "gain": 0.5
+      },
       "joint_names": [
         "left_arm_joint1",
         "left_arm_joint2",
@@ -51,7 +58,15 @@
         "left_arm_joint5",
         "left_arm_joint6",
         "left_arm_joint7"
-      ]
+      ],
+      "rotation_joint_names": [
+        "left_arm_joint5",
+        "left_arm_joint6",
+        "left_arm_joint7"
+      ],
+      "rotation_leak_weight": 0.0,
+      "rotation_roll_axis": [1.0, 0.0, 0.0],
+      "rotation_roll_scale": 1.0
     },
     {
       "name": "right",
@@ -60,6 +75,13 @@
       "reference_target": "RightShoulder",
       "base_body": "right_arm_base_link",
       "body": "right_gripper_tcp_link",
+      "elbow_constraint": {
+        "enabled": true,
+        "source_target": "RightArmLower",
+        "robot_body": "right_arm_link4",
+        "weight": 8.0,
+        "gain": 0.5
+      },
       "joint_names": [
         "right_arm_joint1",
         "right_arm_joint2",
@@ -68,7 +90,15 @@
         "right_arm_joint5",
         "right_arm_joint6",
         "right_arm_joint7"
-      ]
+      ],
+      "rotation_joint_names": [
+        "right_arm_joint5",
+        "right_arm_joint6",
+        "right_arm_joint7"
+      ],
+      "rotation_leak_weight": 0.0,
+      "rotation_roll_axis": [1.0, 0.0, 0.0],
+      "rotation_roll_scale": 1.0
     }
   ],
   "collision": {

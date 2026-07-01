@@ -162,7 +162,7 @@ int main(int argc, char** argv) {
     fprintf(stderr,
             "usage: %s <body.jsonl> --robot_xml <galbot_g1.xml> --save_jsonl <out> "
             "[--target_mode shoulder_delta|frame_delta|se3_delta|shoulder_absolute] "
-            "[--orientation_mode neutral|relative_wrist] [opts]\n",
+            "[--orientation_mode neutral|relative_wrist|relative_wrist_roll|wrist_roll] [opts]\n",
             argv[0]);
     return 2;
   }
@@ -176,12 +176,12 @@ int main(int argc, char** argv) {
   double arm_reach_scale = 0.82;
   double max_joint_velocity_deg_s = 240.0;
   double joint_lowpass_cutoff = 0.0;
-  double input_one_euro_min_cutoff = 0.6;
+  double input_one_euro_min_cutoff = 0.0;
   double input_one_euro_beta = 0.03;
   double input_one_euro_d_cutoff = 1.0;
   bool align_heading = true;
   std::string target_mode_name = "shoulder_delta";
-  std::string orientation_mode_name = "neutral";
+  std::string orientation_mode_name = "relative_wrist_roll";
   int max_frames = 0;
 
   for (int i = 2; i < argc; ++i) {
@@ -212,7 +212,12 @@ int main(int argc, char** argv) {
     }
     else if (a == "--orientation_mode") {
       orientation_mode_name = next();
-      if (orientation_mode_name != "neutral" && orientation_mode_name != "relative_wrist") {
+      if (orientation_mode_name == "wrist_roll") {
+        orientation_mode_name = "relative_wrist_roll";
+      }
+      if (orientation_mode_name != "neutral" &&
+          orientation_mode_name != "relative_wrist" &&
+          orientation_mode_name != "relative_wrist_roll") {
         fprintf(stderr, "unknown --orientation_mode: %s\n", orientation_mode_name.c_str());
         return 2;
       }

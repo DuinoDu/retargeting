@@ -50,6 +50,8 @@ SkeletonFrame DualArmEePoseAlgorithm::last_targets() const { return {}; }
 
 namespace {
 
+constexpr double kPi = 3.14159265358979323846;
+
 std::vector<std::string> string_array(const json& value) {
   std::vector<std::string> out;
   for (const auto& item : value) out.push_back(item.get<std::string>());
@@ -107,6 +109,56 @@ double option_double(const RetargetConfig& config, const std::string& key, doubl
   return std::stod(it->second);
 }
 
+double clamp_unit(double value) {
+  return std::max(-1.0, std::min(1.0, value));
+}
+
+Eigen::Vector3d parse_axis(const json& value, const std::string& field) {
+  if (!value.is_array() || value.size() != 3)
+    throw std::runtime_error(field + " must be a 3-element array");
+  Eigen::Vector3d axis(value[0].get<double>(), value[1].get<double>(),
+                       value[2].get<double>());
+  const double norm = axis.norm();
+  if (!(norm > 1e-9) || !std::isfinite(norm))
+    throw std::runtime_error(field + " must be a finite non-zero vector");
+  return axis / norm;
+}
+
+Eigen::Matrix3d skew(const Eigen::Vector3d& v) {
+  Eigen::Matrix3d S;
+  S << 0.0, -v.z(), v.y(),
+       v.z(), 0.0, -v.x(),
+       -v.y(), v.x(), 0.0;
+  return S;
+}
+
+double normalize_angle(double angle) {
+  while (angle > kPi) angle -= 2.0 * kPi;
+  while (angle < -kPi) angle += 2.0 * kPi;
+  return angle;
+}
+
+Eigen::Vector4d axis_angle_quat(const Eigen::Vector3d& axis, double angle) {
+  const double norm = axis.norm();
+  if (!(norm > 1e-9) || !std::isfinite(norm) || !std::isfinite(angle))
+    return Eigen::Vector4d(1, 0, 0, 0);
+  const Eigen::Vector3d a = axis / norm;
+  const double half = 0.5 * angle;
+  const double s = std::sin(half);
+  return normalized_quat(Eigen::Vector4d(std::cos(half), a.x() * s, a.y() * s, a.z() * s));
+}
+
+double signed_twist_angle(const Eigen::Vector4d& rotation,
+                          const Eigen::Vector3d& axis) {
+  const double norm = axis.norm();
+  if (!(norm > 1e-9) || !std::isfinite(norm)) return 0.0;
+  Eigen::Vector4d q = normalized_quat(rotation);
+  if (q[0] < 0.0) q = -q;
+  const Eigen::Vector3d a = axis / norm;
+  const double projected = q.tail<3>().dot(a);
+  return normalize_angle(2.0 * std::atan2(projected, q[0]));
+}
+
 }  // namespace
 
 struct DualArmEePoseAlgorithm::Impl {
@@ -121,11 +173,14 @@ struct DualArmEePoseAlgorithm::Impl {
   enum class OrientationMode {
     Neutral,
     RelativeWrist,
+    RelativeWristRoll,
   };
 
   struct SourcePose {
     Eigen::Vector3d pos = Eigen::Vector3d::Zero();
     Eigen::Vector4d quat = Eigen::Vector4d(1, 0, 0, 0);
+    Eigen::Vector3d roll_axis = Eigen::Vector3d::UnitX();
+    bool has_roll_axis = false;
   };
 
   struct TargetState {
@@ -146,6 +201,10 @@ struct DualArmEePoseAlgorithm::Impl {
     int base_body = -1;
     std::vector<int> joint_qpos;
     std::vector<int> joint_dofs;
+    std::vector<bool> rotation_dof_mask;
+    double rotation_leak_weight = 0.0;
+    Eigen::Vector3d rotation_roll_axis = Eigen::Vector3d::UnitX();
+    double rotation_roll_scale = 1.0;
     Eigen::Matrix<double, 6, 1> cost = Eigen::Matrix<double, 6, 1>::Ones();
     double gain = 1.0;
     Eigen::Matrix<double, 7, 1> target = Eigen::Matrix<double, 7, 1>::Zero();
@@ -156,6 +215,32 @@ struct DualArmEePoseAlgorithm::Impl {
     Eigen::Vector4d neutral_tcp_quat = Eigen::Vector4d(1, 0, 0, 0);
     double reach = 0.0;
     TargetState state;
+
+    bool elbow_enabled = false;
+    std::vector<std::string> elbow_source_names;
+    std::string elbow_body_name;
+    int elbow_body = -1;
+    double elbow_weight = 0.0;
+    double elbow_gain = 0.0;
+    Eigen::Vector3d elbow_target_dir = Eigen::Vector3d::Zero();
+    bool has_elbow_target = false;
+
+    bool wrist_forearm_enabled = false;
+    std::vector<std::string> wrist_forearm_source_elbow_names;
+    std::vector<std::string> wrist_forearm_source_wrist_names;
+    std::string wrist_forearm_robot_elbow_body_name;
+    std::string wrist_forearm_robot_wrist_body_name;
+    std::string wrist_forearm_robot_ee_body_name;
+    int wrist_forearm_robot_elbow_body = -1;
+    int wrist_forearm_robot_wrist_body = -1;
+    int wrist_forearm_robot_ee_body = -1;
+    Eigen::Vector3d wrist_forearm_source_hand_axis = Eigen::Vector3d::UnitY();
+    Eigen::Vector3d wrist_forearm_robot_hand_axis = Eigen::Vector3d::UnitX();
+    double wrist_forearm_weight = 0.0;
+    double wrist_forearm_gain = 0.0;
+    double wrist_forearm_max_extra_bend_rad = -1.0;
+    double wrist_forearm_target_dot = 1.0;
+    bool has_wrist_forearm_target = false;
   };
 
   struct CollisionPair {
@@ -255,6 +340,8 @@ struct DualArmEePoseAlgorithm::Impl {
 
       for (const auto& task : tasks_) {
         if (task.has_target) add_pose_task(task, H, c);
+        if (task.has_elbow_target) add_elbow_direction_task(task, H, c);
+        if (task.has_wrist_forearm_target) add_wrist_forearm_task(task, H, c);
       }
       add_posture_task(H, c);
 
@@ -282,6 +369,13 @@ struct DualArmEePoseAlgorithm::Impl {
     if (qpos.size() != m_->nq)
       throw std::runtime_error("dual_arm_eepose qpos size mismatch");
     set_qpos(qpos);
+    if (locked_qpos_count_ > 0 && locked_qpos_count_ <= static_cast<int>(qpos_.size()))
+      locked_qpos_ = qpos_.head(locked_qpos_count_);
+    for (size_t i = 0; i < clamp_qpos_indices_.size(); ++i) {
+      const int qi = clamp_qpos_indices_[i];
+      if (qi >= 0 && qi < qpos_.size())
+        clamp_qpos_values_[static_cast<int>(i)] = qpos_[qi];
+    }
   }
 
   SkeletonFrame last_targets() const { return last_targets_; }
@@ -312,6 +406,8 @@ struct DualArmEePoseAlgorithm::Impl {
   static OrientationMode parse_orientation_mode(const std::string& mode) {
     if (mode == "neutral") return OrientationMode::Neutral;
     if (mode == "relative_wrist") return OrientationMode::RelativeWrist;
+    if (mode == "relative_wrist_roll" || mode == "wrist_roll")
+      return OrientationMode::RelativeWristRoll;
     throw std::runtime_error("unknown dual_arm_eepose orientation mode: " + mode);
   }
 
@@ -405,6 +501,106 @@ struct DualArmEePoseAlgorithm::Impl {
         auto aliases = string_array(entry["reference_aliases"]);
         task.reference_names.insert(task.reference_names.end(), aliases.begin(), aliases.end());
       }
+      if (entry.contains("elbow_constraint")) {
+        const auto& elbow = entry["elbow_constraint"];
+        task.elbow_enabled = elbow.value("enabled", false);
+        if (task.elbow_enabled) {
+          if (!elbow.contains("source_target") || !elbow.contains("robot_body")) {
+            throw std::runtime_error(
+                "enabled elbow_constraint requires source_target and robot_body for task " +
+                task.name);
+          }
+          task.elbow_source_names.push_back(elbow.at("source_target").get<std::string>());
+          if (elbow.contains("source_aliases")) {
+            auto aliases = string_array(elbow["source_aliases"]);
+            task.elbow_source_names.insert(task.elbow_source_names.end(),
+                                           aliases.begin(), aliases.end());
+          }
+          task.elbow_body_name = elbow.at("robot_body").get<std::string>();
+          task.elbow_body = body_id(task.elbow_body_name);
+          task.elbow_weight = elbow.value("weight", 8.0);
+          task.elbow_gain = elbow.value("gain", 0.5);
+          if (!(task.elbow_weight > 0.0) || !std::isfinite(task.elbow_weight))
+            throw std::runtime_error("elbow_constraint weight must be positive for task " +
+                                     task.name);
+          if (!(task.elbow_gain > 0.0) || !std::isfinite(task.elbow_gain))
+            throw std::runtime_error("elbow_constraint gain must be positive for task " +
+                                     task.name);
+        }
+      }
+      if (entry.contains("wrist_forearm_constraint")) {
+        const auto& wrist = entry["wrist_forearm_constraint"];
+        task.wrist_forearm_enabled = wrist.value("enabled", false);
+        if (task.wrist_forearm_enabled) {
+          if (!wrist.contains("source_elbow") || !wrist.contains("source_wrist") ||
+              !wrist.contains("robot_elbow_body") ||
+              !wrist.contains("robot_wrist_body") ||
+              !wrist.contains("robot_ee_body")) {
+            throw std::runtime_error(
+                "enabled wrist_forearm_constraint requires source_elbow, source_wrist, "
+                "robot_elbow_body, robot_wrist_body, and robot_ee_body for task " +
+                task.name);
+          }
+          task.wrist_forearm_source_elbow_names.push_back(
+              wrist.at("source_elbow").get<std::string>());
+          task.wrist_forearm_source_wrist_names.push_back(
+              wrist.at("source_wrist").get<std::string>());
+          if (wrist.contains("source_elbow_aliases")) {
+            auto aliases = string_array(wrist["source_elbow_aliases"]);
+            task.wrist_forearm_source_elbow_names.insert(
+                task.wrist_forearm_source_elbow_names.end(), aliases.begin(), aliases.end());
+          }
+          if (wrist.contains("source_wrist_aliases")) {
+            auto aliases = string_array(wrist["source_wrist_aliases"]);
+            task.wrist_forearm_source_wrist_names.insert(
+                task.wrist_forearm_source_wrist_names.end(), aliases.begin(), aliases.end());
+          }
+
+          task.wrist_forearm_robot_elbow_body_name =
+              wrist.at("robot_elbow_body").get<std::string>();
+          task.wrist_forearm_robot_wrist_body_name =
+              wrist.at("robot_wrist_body").get<std::string>();
+          task.wrist_forearm_robot_ee_body_name =
+              wrist.at("robot_ee_body").get<std::string>();
+          task.wrist_forearm_robot_elbow_body =
+              body_id(task.wrist_forearm_robot_elbow_body_name);
+          task.wrist_forearm_robot_wrist_body =
+              body_id(task.wrist_forearm_robot_wrist_body_name);
+          task.wrist_forearm_robot_ee_body =
+              body_id(task.wrist_forearm_robot_ee_body_name);
+
+          if (wrist.contains("source_hand_axis")) {
+            task.wrist_forearm_source_hand_axis = parse_axis(
+                wrist["source_hand_axis"],
+                "wrist_forearm_constraint.source_hand_axis");
+          }
+          if (wrist.contains("robot_hand_axis")) {
+            task.wrist_forearm_robot_hand_axis = parse_axis(
+                wrist["robot_hand_axis"],
+                "wrist_forearm_constraint.robot_hand_axis");
+          }
+          task.wrist_forearm_weight = wrist.value("weight", 6.0);
+          task.wrist_forearm_gain = wrist.value("gain", 0.5);
+          if (!(task.wrist_forearm_weight > 0.0) ||
+              !std::isfinite(task.wrist_forearm_weight))
+            throw std::runtime_error(
+                "wrist_forearm_constraint weight must be positive for task " +
+                task.name);
+          if (!(task.wrist_forearm_gain > 0.0) ||
+              !std::isfinite(task.wrist_forearm_gain))
+            throw std::runtime_error(
+                "wrist_forearm_constraint gain must be positive for task " +
+                task.name);
+          if (wrist.contains("max_extra_bend_deg")) {
+            const double deg = wrist.at("max_extra_bend_deg").get<double>();
+            if (!(deg >= 0.0) || !std::isfinite(deg))
+              throw std::runtime_error(
+                  "wrist_forearm_constraint max_extra_bend_deg must be non-negative for task " +
+                  task.name);
+            task.wrist_forearm_max_extra_bend_rad = deg * kPi / 180.0;
+          }
+        }
+      }
       const double pos_w = entry.value("position_weight", default_pos_weight);
       const double rot_w = entry.value("rotation_weight", default_rot_weight);
       task.cost << pos_w, pos_w, pos_w, rot_w, rot_w, rot_w;
@@ -422,6 +618,46 @@ struct DualArmEePoseAlgorithm::Impl {
         task.joint_qpos.push_back(qadr);
         task.joint_dofs.push_back(dadr);
         active_dof_[dadr] = true;
+      }
+      task.rotation_dof_mask.assign(m_->nv, false);
+      if (entry.contains("rotation_joint_names")) {
+        const auto rotation_joint_names = string_array(entry["rotation_joint_names"]);
+        if (rotation_joint_names.empty())
+          throw std::runtime_error("rotation_joint_names must not be empty for task " +
+                                   task.name);
+        for (const std::string& joint_name : rotation_joint_names) {
+          int jid = mj_name2id(m_, mjOBJ_JOINT, joint_name.c_str());
+          if (jid < 0)
+            throw std::runtime_error("unknown rotation joint in dual_arm_eepose config: " +
+                                     joint_name);
+          if (m_->jnt_type[jid] != mjJNT_HINGE && m_->jnt_type[jid] != mjJNT_SLIDE)
+            throw std::runtime_error(
+                "dual_arm_eepose rotation_joint_names only supports 1-DoF joints: " +
+                joint_name);
+          const int dadr = m_->jnt_dofadr[jid];
+          if (std::find(task.joint_dofs.begin(), task.joint_dofs.end(), dadr) ==
+              task.joint_dofs.end()) {
+            throw std::runtime_error("rotation joint is not part of task joint_names: " +
+                                     joint_name);
+          }
+          task.rotation_dof_mask[dadr] = true;
+        }
+      } else {
+        for (int dadr : task.joint_dofs) task.rotation_dof_mask[dadr] = true;
+      }
+      task.rotation_leak_weight = entry.value("rotation_leak_weight", 0.0);
+      if (!(task.rotation_leak_weight >= 0.0 && task.rotation_leak_weight <= 1.0) ||
+          !std::isfinite(task.rotation_leak_weight)) {
+        throw std::runtime_error(
+            "rotation_leak_weight must be finite in [0, 1] for task " + task.name);
+      }
+      if (entry.contains("rotation_roll_axis")) {
+        task.rotation_roll_axis =
+            parse_axis(entry["rotation_roll_axis"], "rotation_roll_axis");
+      }
+      task.rotation_roll_scale = entry.value("rotation_roll_scale", 1.0);
+      if (!std::isfinite(task.rotation_roll_scale)) {
+        throw std::runtime_error("rotation_roll_scale must be finite for task " + task.name);
       }
       tasks_.push_back(std::move(task));
     }
@@ -636,12 +872,22 @@ struct DualArmEePoseAlgorithm::Impl {
       if (orientation_mode_ == OrientationMode::RelativeWrist) {
         quat = normalized_quat(qmul(
             task.neutral_tcp_quat, qmul(qconj(state.initial_source_quat), source.quat)));
+      } else if (orientation_mode_ == OrientationMode::RelativeWristRoll &&
+                 source.has_roll_axis) {
+        const Eigen::Vector4d delta_body =
+            normalized_quat(qmul(source.quat, qconj(state.initial_source_quat)));
+        const double roll =
+            task.rotation_roll_scale * signed_twist_angle(delta_body, source.roll_axis);
+        quat = normalized_quat(
+            qmul(task.neutral_tcp_quat, axis_angle_quat(task.rotation_roll_axis, roll)));
       } else {
         quat = task.neutral_tcp_quat;
       }
     } else {
       const Eigen::Vector4d delta_quat =
           normalized_quat(qmul(qconj(state.prev_source_quat), source.quat));
+      const Eigen::Vector4d delta_body_quat =
+          normalized_quat(qmul(source.quat, qconj(state.prev_source_quat)));
       Eigen::Vector3d delta_pos = source.pos - state.prev_source_pos;
       if (source_mode_ == SourceMode::Se3Delta) {
         delta_pos = qrotate(qconj(state.prev_source_quat), delta_pos);
@@ -652,6 +898,11 @@ struct DualArmEePoseAlgorithm::Impl {
 
       if (orientation_mode_ == OrientationMode::RelativeWrist) {
         quat = normalized_quat(qmul(quat, delta_quat));
+      } else if (orientation_mode_ == OrientationMode::RelativeWristRoll &&
+                 source.has_roll_axis) {
+        const double roll =
+            task.rotation_roll_scale * signed_twist_angle(delta_body_quat, source.roll_axis);
+        quat = normalized_quat(qmul(quat, axis_angle_quat(task.rotation_roll_axis, roll)));
       } else {
         quat = task.neutral_tcp_quat;
       }
@@ -667,6 +918,8 @@ struct DualArmEePoseAlgorithm::Impl {
   void update_absolute_targets(const SkeletonFrame& frame) {
     for (auto& task : tasks_) {
       task.has_target = false;
+      task.has_elbow_target = false;
+      task.has_wrist_forearm_target = false;
       Pose pose;
       if (find_pose(frame, task.target_names, pose)) {
         set_task_target(task, pose.pos, pose.quat);
@@ -677,32 +930,108 @@ struct DualArmEePoseAlgorithm::Impl {
   void update_source_targets(const SkeletonFrame& frame) {
     Eigen::Matrix3d R_world_body;
     Eigen::Vector4d q_world_body;
-    const bool need_shoulder_frame = source_mode_ != SourceMode::FrameDelta;
+    const bool any_elbow_enabled = std::any_of(
+        tasks_.begin(), tasks_.end(), [](const Task& task) { return task.elbow_enabled; });
+    const bool any_wrist_forearm_enabled = std::any_of(
+        tasks_.begin(), tasks_.end(),
+        [](const Task& task) { return task.wrist_forearm_enabled; });
+    const bool need_shoulder_frame =
+        source_mode_ != SourceMode::FrameDelta || any_elbow_enabled ||
+        any_wrist_forearm_enabled;
     if (need_shoulder_frame &&
         !make_shoulder_frame(frame, R_world_body, q_world_body)) {
-      for (auto& task : tasks_) task.has_target = false;
+      for (auto& task : tasks_) {
+        task.has_target = false;
+        task.has_elbow_target = false;
+        task.has_wrist_forearm_target = false;
+      }
       return;
     }
 
     std::vector<utils::NamedPose> filter_inputs;
+    std::vector<SourcePose> source_inputs;
     std::vector<size_t> filter_task_indices;
     filter_inputs.reserve(tasks_.size());
+    source_inputs.reserve(tasks_.size());
     filter_task_indices.reserve(tasks_.size());
     for (size_t i = 0; i < tasks_.size(); ++i) {
       Task& task = tasks_[i];
       task.has_target = false;
+      task.has_elbow_target = false;
+      task.has_wrist_forearm_target = false;
 
       Pose target_pose;
       if (!find_pose(frame, task.target_names, target_pose)) continue;
+
+      Pose reference_pose;
+      bool has_reference = false;
+      if (need_shoulder_frame || source_mode_ != SourceMode::FrameDelta) {
+        has_reference = find_pose(frame, task.reference_names, reference_pose);
+        if (!has_reference && source_mode_ != SourceMode::FrameDelta) continue;
+      }
+
+      if (task.elbow_enabled && has_reference) {
+        Pose elbow_pose;
+        if (find_pose(frame, task.elbow_source_names, elbow_pose)) {
+          Eigen::Vector3d dir =
+              R_world_body.transpose() * (elbow_pose.pos - reference_pose.pos);
+          const double norm = dir.norm();
+          if (norm > 1e-6 && std::isfinite(norm)) {
+            task.elbow_target_dir = dir / norm;
+            task.has_elbow_target = true;
+          }
+        }
+      }
+
+      if (task.wrist_forearm_enabled) {
+        Pose source_elbow_pose;
+        Pose source_wrist_pose;
+        if (find_pose(frame, task.wrist_forearm_source_elbow_names, source_elbow_pose) &&
+            find_pose(frame, task.wrist_forearm_source_wrist_names, source_wrist_pose)) {
+          Eigen::Vector3d forearm =
+              source_wrist_pose.pos - source_elbow_pose.pos;
+          const double forearm_norm = forearm.norm();
+          Eigen::Vector3d hand_axis = qrotate(
+              normalized_quat(source_wrist_pose.quat),
+              task.wrist_forearm_source_hand_axis);
+          const double hand_axis_norm = hand_axis.norm();
+          if (forearm_norm > 1e-6 && std::isfinite(forearm_norm) &&
+              hand_axis_norm > 1e-6 && std::isfinite(hand_axis_norm)) {
+            forearm /= forearm_norm;
+            hand_axis /= hand_axis_norm;
+            task.wrist_forearm_target_dot = clamp_unit(forearm.dot(hand_axis));
+            task.has_wrist_forearm_target = true;
+          }
+        }
+      }
 
       SourcePose source;
       if (source_mode_ == SourceMode::FrameDelta) {
         source.pos = target_pose.pos;
         source.quat = normalized_quat(target_pose.quat);
       } else {
-        Pose reference_pose;
-        if (!find_pose(frame, task.reference_names, reference_pose)) continue;
         source = to_body_relative_pose(reference_pose, target_pose, R_world_body, q_world_body);
+      }
+
+      if (orientation_mode_ == OrientationMode::RelativeWristRoll) {
+        std::vector<std::string> roll_elbow_names = task.elbow_source_names;
+        if (roll_elbow_names.empty()) {
+          if (task.name.find("right") != std::string::npos) {
+            roll_elbow_names.push_back("RightArmLower");
+          } else {
+            roll_elbow_names.push_back("LeftArmLower");
+          }
+        }
+        Pose roll_elbow_pose;
+        if (find_pose(frame, roll_elbow_names, roll_elbow_pose)) {
+          Eigen::Vector3d axis = target_pose.pos - roll_elbow_pose.pos;
+          if (source_mode_ != SourceMode::FrameDelta) axis = R_world_body.transpose() * axis;
+          const double axis_norm = axis.norm();
+          if (axis_norm > 1e-6 && std::isfinite(axis_norm)) {
+            source.roll_axis = axis / axis_norm;
+            source.has_roll_axis = true;
+          }
+        }
       }
 
       utils::NamedPose named;
@@ -710,6 +1039,7 @@ struct DualArmEePoseAlgorithm::Impl {
       named.pos = source.pos;
       named.quat = source.quat;
       filter_inputs.push_back(std::move(named));
+      source_inputs.push_back(source);
       filter_task_indices.push_back(i);
     }
 
@@ -718,7 +1048,7 @@ struct DualArmEePoseAlgorithm::Impl {
     source_time_s_ += 1.0 / source_fps_;
 
     for (size_t i = 0; i < filter_inputs.size(); ++i) {
-      SourcePose source;
+      SourcePose source = source_inputs[i];
       source.pos = filter_inputs[i].pos;
       source.quat = normalized_quat(filter_inputs[i].quat);
       update_source_target(tasks_[filter_task_indices[i]], source);
@@ -767,8 +1097,26 @@ struct DualArmEePoseAlgorithm::Impl {
   void add_pose_task(const Task& task, Eigen::MatrixXd& H, Eigen::VectorXd& c) const {
     Eigen::Matrix<double, 7, 1> current;
     frame_pose(task.body, current);
-    Eigen::MatrixXd jac6;
-    frame_jacobian(task.body, jac6);
+    const int nv = m_->nv;
+
+    std::vector<double> jacp(3 * nv), jacr(3 * nv);
+    mj_jacBody(m_, d_, jacp.data(), jacr.data(), task.body);
+    Eigen::MatrixXd pos_jacobian = Eigen::MatrixXd::Zero(3, nv);
+    for (int col = 0; col < nv; ++col) {
+      for (int row = 0; row < 3; ++row)
+        pos_jacobian(row, col) = jacp[row * nv + col];
+    }
+
+    const Eigen::Vector3d pos_error = task.target.tail<3>() - current.tail<3>();
+    const double pos_weight = task.cost[0];
+    if (pos_weight > 0.0) {
+      Eigen::MatrixXd weighted_pos_jacobian = pos_weight * pos_jacobian;
+      Eigen::Vector3d weighted_pos_error = pos_weight * task.gain * pos_error;
+      H.noalias() += weighted_pos_jacobian.transpose() * weighted_pos_jacobian;
+      c.noalias() -= weighted_pos_jacobian.transpose() * weighted_pos_error;
+    }
+
+    if (!(task.cost.tail<3>().maxCoeff() > 0.0)) return;
 
     Eigen::Matrix<double, 6, 1> error = lie::se3_rminus(task.target, current);
     double T_tb[7];
@@ -779,12 +1127,133 @@ struct DualArmEePoseAlgorithm::Impl {
     for (int i = 0; i < 6; ++i)
       for (int j = 0; j < 6; ++j) Jlog(i, j) = jlog[6 * i + j];
 
+    Eigen::MatrixXd jac6;
+    frame_jacobian(task.body, jac6);
     Eigen::MatrixXd jacobian = -(Jlog * jac6);
     Eigen::Matrix<double, 6, 1> weighted_error =
         task.cost.array() * (-task.gain * error).array();
     Eigen::MatrixXd weighted_jacobian = task.cost.asDiagonal() * jacobian;
+    weighted_jacobian.topRows<3>().setZero();
+    weighted_error.head<3>().setZero();
+    if (task.rotation_dof_mask.size() == static_cast<size_t>(weighted_jacobian.cols())) {
+      for (int row = 3; row < 6; ++row) {
+        for (int col = 0; col < weighted_jacobian.cols(); ++col) {
+          if (!task.rotation_dof_mask[col])
+            weighted_jacobian(row, col) *= task.rotation_leak_weight;
+        }
+      }
+    }
     H.noalias() += weighted_jacobian.transpose() * weighted_jacobian;
     c.noalias() -= weighted_jacobian.transpose() * weighted_error;
+  }
+
+  void add_elbow_direction_task(const Task& task, Eigen::MatrixXd& H,
+                                Eigen::VectorXd& c) const {
+    if (!task.elbow_enabled || !task.has_elbow_target) return;
+    const double* base_xpos = d_->xpos + 3 * task.base_body;
+    const double* elbow_xpos = d_->xpos + 3 * task.elbow_body;
+    Eigen::Vector3d v(elbow_xpos[0] - base_xpos[0],
+                      elbow_xpos[1] - base_xpos[1],
+                      elbow_xpos[2] - base_xpos[2]);
+    const double len = v.norm();
+    if (!(len > 1e-6) || !std::isfinite(len)) return;
+
+    Eigen::Vector3d u_robot = v / len;
+    Eigen::Vector3d u_target = task.elbow_target_dir;
+    const double target_norm = u_target.norm();
+    if (!(target_norm > 1e-6) || !std::isfinite(target_norm)) return;
+    u_target /= target_norm;
+
+    const int nv = m_->nv;
+    std::vector<double> j_base(3 * nv), jr_base(3 * nv);
+    std::vector<double> j_elbow(3 * nv), jr_elbow(3 * nv);
+    mj_jacBody(m_, d_, j_base.data(), jr_base.data(), task.base_body);
+    mj_jacBody(m_, d_, j_elbow.data(), jr_elbow.data(), task.elbow_body);
+
+    Eigen::MatrixXd j_v = Eigen::MatrixXd::Zero(3, nv);
+    for (int col = 0; col < nv; ++col) {
+      if (!active_dof_[col]) continue;
+      for (int row = 0; row < 3; ++row)
+        j_v(row, col) = j_elbow[row * nv + col] - j_base[row * nv + col];
+    }
+
+    const Eigen::Matrix3d projector =
+        Eigen::Matrix3d::Identity() - u_robot * u_robot.transpose();
+    Eigen::MatrixXd j_dir = (projector / len) * j_v;
+    if (j_dir.squaredNorm() < 1e-12) return;
+
+    const Eigen::Vector3d error = u_robot - u_target;
+    const Eigen::Vector3d desired = -task.elbow_gain * error;
+    H.noalias() += task.elbow_weight * (j_dir.transpose() * j_dir);
+    c.noalias() -= task.elbow_weight * (j_dir.transpose() * desired);
+  }
+
+  void add_wrist_forearm_task(const Task& task, Eigen::MatrixXd& H,
+                              Eigen::VectorXd& c) const {
+    if (!task.wrist_forearm_enabled || !task.has_wrist_forearm_target) return;
+
+    const double* elbow_xpos = d_->xpos + 3 * task.wrist_forearm_robot_elbow_body;
+    const double* wrist_xpos = d_->xpos + 3 * task.wrist_forearm_robot_wrist_body;
+    Eigen::Vector3d forearm(wrist_xpos[0] - elbow_xpos[0],
+                            wrist_xpos[1] - elbow_xpos[1],
+                            wrist_xpos[2] - elbow_xpos[2]);
+    const double forearm_len = forearm.norm();
+    if (!(forearm_len > 1e-6) || !std::isfinite(forearm_len)) return;
+    Eigen::Vector3d u_robot = forearm / forearm_len;
+
+    const double* ee_xmat = d_->xmat + 9 * task.wrist_forearm_robot_ee_body;
+    Eigen::Matrix3d R_ee;
+    for (int row = 0; row < 3; ++row)
+      for (int col = 0; col < 3; ++col) R_ee(row, col) = ee_xmat[3 * row + col];
+    Eigen::Vector3d a_robot = R_ee * task.wrist_forearm_robot_hand_axis;
+    const double axis_norm = a_robot.norm();
+    if (!(axis_norm > 1e-6) || !std::isfinite(axis_norm)) return;
+    a_robot /= axis_norm;
+
+    const double source_dot = clamp_unit(task.wrist_forearm_target_dot);
+    const double robot_dot = clamp_unit(u_robot.dot(a_robot));
+    double target_dot = source_dot;
+    if (task.wrist_forearm_max_extra_bend_rad >= 0.0) {
+      const double source_angle = std::acos(source_dot);
+      const double limit_angle =
+          std::min(kPi, source_angle + task.wrist_forearm_max_extra_bend_rad);
+      target_dot = std::cos(limit_angle);
+    }
+
+    const int nv = m_->nv;
+    std::vector<double> j_elbow(3 * nv), jr_elbow(3 * nv);
+    std::vector<double> j_wrist(3 * nv), jr_wrist(3 * nv);
+    std::vector<double> j_ee(3 * nv), jr_ee(3 * nv);
+    mj_jacBody(m_, d_, j_elbow.data(), jr_elbow.data(),
+               task.wrist_forearm_robot_elbow_body);
+    mj_jacBody(m_, d_, j_wrist.data(), jr_wrist.data(),
+               task.wrist_forearm_robot_wrist_body);
+    mj_jacBody(m_, d_, j_ee.data(), jr_ee.data(),
+               task.wrist_forearm_robot_ee_body);
+
+    Eigen::MatrixXd j_v = Eigen::MatrixXd::Zero(3, nv);
+    Eigen::MatrixXd j_rot = Eigen::MatrixXd::Zero(3, nv);
+    for (int col = 0; col < nv; ++col) {
+      if (!active_dof_[col]) continue;
+      for (int row = 0; row < 3; ++row) {
+        j_v(row, col) = j_wrist[row * nv + col] - j_elbow[row * nv + col];
+        j_rot(row, col) = jr_ee[row * nv + col];
+      }
+    }
+
+    const Eigen::Matrix3d projector =
+        Eigen::Matrix3d::Identity() - u_robot * u_robot.transpose();
+    const Eigen::MatrixXd j_u = (projector / forearm_len) * j_v;
+    const Eigen::MatrixXd j_a = -skew(a_robot) * j_rot;
+
+    if (task.wrist_forearm_max_extra_bend_rad >= 0.0 && robot_dot >= target_dot) return;
+    Eigen::RowVectorXd row = a_robot.transpose() * j_u + u_robot.transpose() * j_a;
+    if (row.squaredNorm() < 1e-12) return;
+
+    const double error = robot_dot - target_dot;
+    const double desired = -task.wrist_forearm_gain * error;
+    H.noalias() += task.wrist_forearm_weight * (row.transpose() * row);
+    c.noalias() -= task.wrist_forearm_weight * desired * row.transpose();
   }
 
   void add_posture_task(Eigen::MatrixXd& H, Eigen::VectorXd& c) const {
